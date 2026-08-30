@@ -9,9 +9,11 @@ function client() {
 }
 
 const SYSTEM = `You are the final decision layer for a conservative stock opportunity scanner.
-Use only the market metrics and news supplied to you. Do not invent fundamentals, float, short interest, filings, FDA status, dilution, bid/ask data, or live prices.
-This MVP is momentum-first. If capital structure or fundamentals are not supplied, explicitly call them unverified.
-A strong setup should generally have: verified RVOL >=3x (ideally >=5x), accelerating volume, tight liquidity, high dollar volume, within about 3-5% of HOD, above/holding VWAP, higher lows or consolidation, and a meaningful fresh catalyst.
+Use only the supplied market metrics, news, and primary-source research. Never invent fundamentals, float, short interest, filings, FDA status, dilution, bid/ask data, or live prices.
+Fundamentals determine WHAT to own; technicals determine WHEN to own it. This version is still momentum-first.
+A strong short-term setup should generally have: verified RVOL >=3x (ideally >=5x), accelerating volume, tight liquidity, high dollar volume, within about 3-5% of HOD, above/holding VWAP, higher lows/consolidation, and a meaningful fresh catalyst.
+A catalyst marked Unconfirmed cannot support a Strong rating. Meaningful dilution/capital-structure red flags should sharply reduce the rating even if the technical chart looks good.
+For biotech, explicitly respect small sample size and separate clinical promise from shareholder/capital-structure quality.
 Do not force trades. If evidence is weak, output Watch or Avoid. Avoid chasing parabolic moves.
 Entry triggers must be conditional, not market orders. Invalidation must be logically below structure/VWAP/support when data supports it.
 Return JSON only, with no markdown.`;
@@ -36,6 +38,7 @@ function candidatePayload(c: Candidate) {
     aboveVwap: c.aboveVwap,
     technicalScore: c.technicalScore,
     warnings: c.warnings,
+    catalystResearch: c.research || null,
     news: c.news.slice(0, 5).map(n => ({
       title: n.title,
       description: n.description?.slice(0, 700),
@@ -56,9 +59,9 @@ export async function analyzeCandidates(candidates: Candidate[]): Promise<Candid
         "rating": "Strong|Watch|Avoid",
         "summary": "short setup summary",
         "whyMoving": "best supported reason or Unclear / needs catalyst confirmation",
-        "catalyst": "fresh catalyst, or No verified catalyst",
+        "catalyst": "verified catalyst summary, or No verified catalyst",
         "majorRisk": "main risk",
-        "capitalStructureRisk": "Unverified in this MVP unless supplied",
+        "capitalStructureRisk": "specific verified dilution risk or Unverified",
         "entryTrigger": "conditional trigger or No actionable entry",
         "invalidation": "price/condition or Needs confirmation",
         "targets": ["target 1", "target 2"],
@@ -91,7 +94,7 @@ export async function analyzeCandidates(candidates: Candidate[]): Promise<Candid
           whyMoving: String(r.whyMoving || "Unclear"),
           catalyst: String(r.catalyst || "No verified catalyst"),
           majorRisk: String(r.majorRisk || "Unverified risk"),
-          capitalStructureRisk: String(r.capitalStructureRisk || "Unverified in this MVP"),
+          capitalStructureRisk: String(r.capitalStructureRisk || "Unverified"),
           entryTrigger: String(r.entryTrigger || "No actionable entry"),
           invalidation: String(r.invalidation || "Needs confirmation"),
           targets: Array.isArray(r.targets) ? r.targets.map(String).slice(0, 3) : [],

@@ -32,6 +32,42 @@ export type NewsItem = {
   tags?: string[];
 };
 
+export type PrimarySource = {
+  title: string;
+  url: string;
+  domain: string;
+  sourceType: "SEC" | "FDA" | "ClinicalTrials" | "Company" | "Other";
+};
+
+export type TrialEvidence = {
+  nctId?: string;
+  phase?: string;
+  enrollment?: number | null;
+  status?: string;
+  summary?: string;
+};
+
+export type CatalystResearch = {
+  checkedAt: string;
+  companyName: string;
+  status: "Confirmed" | "Partially confirmed" | "Unconfirmed";
+  catalystType: string;
+  summary: string;
+  sourceQuality: "High" | "Medium" | "Low";
+  significanceScore: number;
+  freshness: string;
+  primarySources: PrimarySource[];
+  secFindings: string[];
+  dilutionFlags: string[];
+  warnings: string[];
+  biotech: {
+    relevant: boolean;
+    fdaSummary: string;
+    trials: TrialEvidence[];
+    smallDatasetWarning: boolean;
+  };
+};
+
 export type Candidate = {
   ticker: string;
   currentPrice: number;
@@ -54,6 +90,7 @@ export type Candidate = {
   warnings: string[];
   news: NewsItem[];
   bars: Bar[];
+  research?: CatalystResearch;
   ai?: {
     rating: "Strong" | "Watch" | "Avoid";
     summary: string;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { analyzeCandidates } from "@/lib/ai";
+import { verifyCatalysts } from "@/lib/research";
 import { getAllSnapshots, getBars, getNews } from "@/lib/tiingo";
 import { buildCandidate, discoveryFilter, rankDiscovery } from "@/lib/technicals";
 import type { Candidate } from "@/lib/types";
@@ -19,7 +20,6 @@ export async function POST() {
       .filter(discoveryFilter)
       .sort((a, b) => rankDiscovery(b) - rankDiscovery(a));
 
-    // Keep request usage modest on Tiingo Starter. Intraday validation costs one request per symbol.
     const shortlist = discovered.slice(0, 12);
     const end = new Date();
     const start = new Date(end.getTime() - 18 * 24 * 60 * 60 * 1000);
@@ -43,9 +43,16 @@ export async function POST() {
       news: news.filter((n) => n.tickers?.some((t) => t.toUpperCase() === c.ticker.toUpperCase())).slice(0, 6)
     }));
 
+    // v0.2: one primary-source web-research pass across the top finalists.
+    candidates = await verifyCatalysts(candidates);
     candidates = await analyzeCandidates(candidates);
 
-    const strong = candidates.filter((c) => c.ai?.rating === "Strong" && c.technicalScore >= 70);
+    const strong = candidates.filter((c) =>
+      c.ai?.rating === "Strong" &&
+      c.technicalScore >= 70 &&
+      c.research?.status === "Confirmed" &&
+      (c.research?.dilutionFlags.length || 0) === 0
+    );
     const status = strong.length ? "OPPORTUNITIES_FOUND" : "NO_TRADE";
 
     return NextResponse.json({
@@ -53,15 +60,18 @@ export async function POST() {
       generatedAt: new Date().toISOString(),
       elapsedMs: Date.now() - started,
       dataLabel: "Tiingo consolidated derived realtime + consolidated intraday bars",
+      researchLabel: "OpenAI primary-source web verification (SEC / company IR / FDA / ClinicalTrials.gov)",
       limitations: [
-        "Market-cap, float, short interest and full capital-structure checks are not yet verified in this cheap MVP.",
+        "Market-cap, float and short interest are not yet verified in this version.",
+        "Primary-source catalyst research is limited to the strongest finalists to control cost and latency.",
         "Tiingo Starter data is licensed for personal/internal use; do not redistribute it publicly.",
-        "A Strong rating is research output, not an instruction to trade. Confirm in your broker before acting."
+        "A Strong rating is research output, not an instruction to trade. Confirm prices and filings yourself before acting."
       ],
       stats: {
         snapshots: snapshots.length,
         discoveryPassed: discovered.length,
         deepValidated: validatedRaw.filter((r) => r.status === "fulfilled").length,
+        researched: candidates.filter((c) => Boolean(c.research)).length,
         finalists: candidates.length
       },
       candidates

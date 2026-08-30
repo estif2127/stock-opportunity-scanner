@@ -1,74 +1,51 @@
-# Stock Opportunity Scanner v0.1
+# Stock Opportunity Scanner v0.2
 
-A conservative momentum scanner using Tiingo for market data and OpenAI for finalist analysis.
+A personal research scanner for short-term U.S. equity momentum opportunities.
 
-## What it does
+## What v0.2 adds
 
-1. Pulls Tiingo's current consolidated equity snapshots.
-2. Discovers U.S. equities priced $1–$50, up at least 5%, with at least 1M shares of current volume.
-3. Deep-validates the top discovery candidates using 5-minute consolidated intraday bars.
-4. Calculates HOD distance, VWAP, comparable-time RVOL, volume acceleration, recent higher lows, liquidity spread and dollar volume.
-5. Pulls recent Tiingo news for finalists.
-6. Sends only the finalists to OpenAI for a conservative Strong / Watch / Avoid assessment.
-7. Shows an intraday candlestick chart and returns NO TRADE when no candidate clears the quality threshold.
+- Tiingo market-wide discovery and consolidated intraday validation
+- VWAP, HOD distance, comparable-time RVOL, volume acceleration and liquidity scoring
+- Tiingo news discovery
+- OpenAI web research on the strongest finalists
+- Primary-source catalyst verification across SEC filings, company investor relations, FDA and ClinicalTrials.gov when relevant
+- Dilution / capital-structure warning extraction (offerings, ATM, S-3, warrants, convertibles, reverse splits, going-concern risks)
+- Biotech-specific FDA/trial context and small-dataset warnings
+- A Strong rating now requires a confirmed catalyst and no detected dilution flag in addition to technical quality
 
-## Important MVP limitations
+## Run locally
 
-- This cheap version is momentum-first. It does **not** yet fully verify market cap, float, short interest, SEC dilution, warrants/convertibles, biotech trial quality, or full fundamentals.
-- RVOL is only displayed as verified when the app has enough prior intraday sessions to compare volume at the same elapsed-bar count. It is never time-extrapolated.
-- Tiingo Starter data is for personal/internal use. Do not publicly redistribute their data.
-- Always confirm executable price, spread and market status in your broker before acting.
+Create `.env.local`:
 
-## Local setup
-
-```bash
-npm install
-cp .env.example .env.local
-```
-
-Then edit `.env.local`:
-
-```bash
-TIINGO_API_KEY=your_tiingo_key
-OPENAI_API_KEY=your_openai_key
+```env
+TIINGO_API_KEY=...
+OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.6-luna
 ```
 
-Run:
+Then:
 
 ```bash
+npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open `http://localhost:3000`.
 
-## GitHub
+## Deploy on Vercel
 
-Create an empty GitHub repo, then from this folder:
+Push the repo to GitHub, import it into Vercel, and set:
 
-```bash
-git init
-git add .
-git commit -m "Initial stock opportunity scanner"
-git branch -M main
-git remote add origin YOUR_GITHUB_REPO_URL
-git push -u origin main
-```
+- `TIINGO_API_KEY`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (optional)
 
-`.env.local` is ignored and should never be committed.
+Then redeploy.
 
-## Vercel
+## Cost control
 
-1. Import the GitHub repository into Vercel.
-2. Go to Project → Settings → Environment Variables.
-3. Add `TIINGO_API_KEY`, `OPENAI_API_KEY`, and optionally `OPENAI_MODEL`.
-4. Redeploy.
+Primary-source web research is limited to the strongest five finalists per scan. The app does not web-research the entire market.
 
-Do not prefix secrets with `NEXT_PUBLIC_`.
+## Important
 
-## Suggested next versions
-
-- v0.2: 52-week-low / earnings-overreaction reversal engine.
-- v0.3: SEC filing + dilution / ATM / warrant / convertible analyzer.
-- v0.4: biotech FDA / clinical catalyst engine.
-- v0.5: paper trading and outcome tracking.
+This is a research tool, not financial advice. Confirm prices, filings, FDA status and executable levels independently before making decisions. Tiingo Starter data is for personal/internal use; do not redistribute licensed market data publicly.
