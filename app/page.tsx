@@ -43,8 +43,14 @@ export default function Home() {
     setLoading(true); setError(""); setResult(null); setOpenTicker(null);
     try {
       const res = await fetch("/api/scan", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Scan failed");
+      const raw = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(raw?.slice(0, 240) || `Server returned HTTP ${res.status}`);
+      }
+      if (!res.ok) throw new Error(data.error || `Scan failed (HTTP ${res.status})`);
       setResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Scan failed");
@@ -74,7 +80,7 @@ export default function Home() {
       </section>
 
       {loading && <section className="loadingPanel"><div className="scannerLine"/><p>Filtering the market → validating intraday bars → checking news → verifying primary sources → ranking finalists…</p></section>}
-      {error && <section className="error"><strong>Scan failed:</strong> {error}<br/><small>Check TIINGO_API_KEY and OPENAI_API_KEY in Vercel environment variables.</small></section>}
+      {error && <section className="error"><strong>Scan failed:</strong> {error}<br/><small>If this mentions a timeout, redeploy with the v0.2.1 patch. If it names Tiingo or OpenAI specifically, then check that service/key.</small></section>}
 
       {result && (
         <>

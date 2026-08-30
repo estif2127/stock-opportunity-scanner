@@ -50,7 +50,7 @@ export async function verifyCatalysts(candidates: Candidate[]): Promise<Candidat
   if (!ai || !candidates.length) return candidates;
 
   // Deep web research is intentionally limited to the strongest few finalists to keep cost/latency controlled.
-  const deep = candidates.slice(0, 5);
+  const deep = candidates.slice(0, 3);
   const payload = deep.map((c) => ({
     ticker: c.ticker,
     priceChangePct: c.changePct,

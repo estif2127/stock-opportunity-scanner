@@ -6,7 +6,7 @@ import { buildCandidate, discoveryFilter, rankDiscovery } from "@/lib/technicals
 import type { Candidate } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function yyyyMmDd(d: Date) {
   return d.toISOString().slice(0, 10);
