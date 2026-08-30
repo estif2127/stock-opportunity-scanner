@@ -2,6 +2,8 @@ import "server-only";
 import OpenAI from "openai";
 import type { Candidate, ResearchSource, SingleStockReport } from "./types";
 
+const RESEARCH_BUDGET_MS = 55_000;
+
 function client() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
@@ -44,6 +46,47 @@ function category(domain: string): ResearchSource["category"] {
   return "Other";
 }
 
+function fallbackReport(candidate: Candidate, reason: string): SingleStockReport {
+  return {
+    ticker: candidate.ticker,
+    companyName: candidate.ticker,
+    generatedAt: new Date().toISOString(),
+    currentPrice: candidate.currentPrice,
+    changePct: candidate.changePct,
+    high: candidate.high,
+    low: candidate.low,
+    prevClose: candidate.prevClose,
+    volume: candidate.volume,
+    bars: candidate.bars,
+    technical: {
+      score: candidate.technicalScore,
+      vwap: candidate.vwap,
+      aboveVwap: candidate.aboveVwap,
+      rvol: candidate.rvol,
+      rvolVerified: candidate.rvolVerified,
+      distanceFromHodPct: candidate.distanceFromHodPct,
+      spreadPct: candidate.spreadPct,
+      volumeAcceleration: candidate.volumeAcceleration,
+      higherLows: candidate.higherLows,
+      reasons: candidate.technicalReasons,
+      warnings: candidate.warnings
+    },
+    verdict: "Watch",
+    confidence: 35,
+    thesis: `Research time budget was reached before primary-source verification finished. ${reason}`,
+    whyMoving: candidate.news[0]?.title || "No fresh catalyst was verified inside the research time budget.",
+    catalyst: { type: "Unclear", status: "Unconfirmed", freshness: "Unclear", qualityScore: 0, summary: "Needs primary-source confirmation." },
+    fundamentals: { revenue: "Not fully verified", earnings: "Not fully verified", margins: "Not fully verified", freeCashFlow: "Not fully verified", cashAndDebt: "Not fully verified", valuation: "Not fully verified", guidance: "Not fully verified", competitivePosition: "Not fully verified" },
+    priceVsBusinessDamage: { conclusion: "Not enough verified evidence", priceDamage: "Not established", businessDamage: "Not established", assessment: "Not applicable" },
+    capitalStructure: { risk: "Unknown", summary: "Not fully verified inside the time budget", flags: [] },
+    biotech: { relevant: false, scientificQuality: "Not verified", capitalQuality: "Not verified", trialContext: "Not verified", fdaStatus: "Not verified", cashRunway: "Not verified", warnings: [] },
+    bullCase: [], bearCase: [], upcomingCatalysts: [], whatChangesThesis: [],
+    preferredEntry: "No actionable entry established from incomplete research",
+    invalidation: "Not established",
+    targets: [], riskReward: "Not established", sources: [], news: candidate.news.slice(0, 6)
+  };
+}
+
 export async function deepResearchStock(candidate: Candidate): Promise<SingleStockReport> {
   const ai = client();
   const payload = {
@@ -63,37 +106,45 @@ export async function deepResearchStock(candidate: Candidate): Promise<SingleSto
     volumeAcceleration: candidate.volumeAcceleration,
     higherLows: candidate.higherLows,
     aboveVwap: candidate.aboveVwap,
-    technicalReasons: candidate.technicalReasons,
-    technicalWarnings: candidate.warnings,
-    recentNews: candidate.news.slice(0, 10).map((n) => ({
-      title: n.title, description: n.description?.slice(0, 1000), source: n.source,
-      publishedDate: n.publishedDate, url: n.url
+    technicalReasons: candidate.technicalReasons.slice(0, 6),
+    technicalWarnings: candidate.warnings.slice(0, 6),
+    recentNews: candidate.news.slice(0, 5).map((n) => ({
+      title: n.title,
+      description: n.description?.slice(0, 400),
+      source: n.source,
+      publishedDate: n.publishedDate,
+      url: n.url
     }))
   };
 
-  const prompt = `Act as a conservative professional equity-research analyst. Deep-research ONE stock using current web information and primary sources.
-Today is ${new Date().toISOString()}.
+  const prompt = `You have a strict ~60 second product time budget. Perform a decision-focused research pass on ONE U.S. stock. Do not be exhaustive. Search only what materially changes the verdict.
+Current time: ${new Date().toISOString()}.
 
-Ticker and live/intraday inputs from Tiingo:
+Tiingo market inputs:
 ${JSON.stringify(payload)}
 
-Research priorities:
-1. Verify why the stock is moving. Prefer SEC filings, company investor relations and official releases.
-2. Review the latest earnings release, 10-Q/10-K and guidance. Describe revenue/growth, earnings, margins, free cash flow, cash, debt, valuation context, guidance and competitive position. Do not invent numbers; when exact current figures are unclear, state the qualitative conclusion instead.
-3. Explicitly compare PRICE DAMAGE vs BUSINESS/FUNDAMENTAL DAMAGE. A declining stock is not automatically undervalued.
-4. Search recent SEC filings for S-3, 424B, ATM programs, offerings, warrants, convertibles, reverse splits, share-count growth and going-concern language.
-5. If biotech/clinical-stage, separately assess clinical/scientific quality vs stock/capital-structure quality. Verify trial phase, enrollment/patient count, design/endpoints, FDA status and important upcoming readouts through FDA/ClinicalTrials/company/SEC sources. Flag small samples.
-6. Identify concrete upcoming catalysts and what facts would invalidate the thesis.
-7. Use the supplied technical data for timing. Never fabricate live quote, HOD, VWAP, RVOL or spread values.
-8. Strong should be rare. Do not force an actionable setup. It is acceptable to rate Watch or Avoid.
-9. Do not invent source URLs. Return only URLs actually found with web search.
+Prioritize, in this order:
+1) WHY MOVING: identify the freshest material catalyst and verify it with a primary source when possible (company IR/press release or SEC). Do not chase old/recycled headlines.
+2) LATEST BUSINESS SNAPSHOT: latest reported revenue/growth, earnings/profitability, margins/FCF, cash/debt and guidance. Prefer latest earnings release or 10-Q/10-K. Use concise qualitative wording if exact figures cannot be verified quickly.
+3) CAPITAL STRUCTURE: check the most recent relevant SEC material for active/recent ATM, S-3/424B offering, warrants, convertibles, reverse split, rapid share-count growth or going-concern risk. Do not search years of filings unless necessary.
+4) PRICE DAMAGE VS BUSINESS DAMAGE: state whether market punishment looks worse than underlying deterioration, roughly aligned, or justified by worse business damage.
+5) BIOTECH ONLY IF RELEVANT: verify phase, patient count/design, FDA status, next readout and financing risk. Explicitly flag tiny datasets.
+6) Give the bull case, bear case, next catalysts, thesis breakers and a conservative verdict.
 
-Return JSON only in this exact shape:
+Research limits:
+- Prefer 3-6 high-quality sources total.
+- Prefer SEC.gov, official company IR, FDA.gov, ClinicalTrials.gov, then reputable financial reporting.
+- Do not read or summarize entire filings; find the sections that answer the questions above.
+- Never fabricate live price/HOD/VWAP/RVOL/spread. Use Tiingo inputs only for those.
+- Strong should be rare. If evidence is incomplete, use Watch.
+- Return compact JSON only, no prose outside JSON.
+
+Return exactly:
 {
   "companyName":"",
   "verdict":"Strong|Watch|Avoid",
   "confidence":0,
-  "thesis":"concise overall conclusion",
+  "thesis":"2-4 concise sentences",
   "whyMoving":"",
   "catalyst":{"type":"","status":"Confirmed|Partially confirmed|Unconfirmed","freshness":"","qualityScore":0,"summary":""},
   "fundamentals":{"revenue":"","earnings":"","margins":"","freeCashFlow":"","cashAndDebt":"","valuation":"","guidance":"","competitivePosition":""},
@@ -111,25 +162,36 @@ Return JSON only in this exact shape:
   "sources":[{"title":"","url":"https://...","domain":""}]
 }`;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESEARCH_BUDGET_MS);
   let response: any;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      response = await ai.responses.create({
-        model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
-        tools: [{ type: "web_search", search_context_size: "low" }],
-        input: prompt,
-        max_output_tokens: 5000
-      });
-      break;
-    } catch (error: any) {
-      const is429 = error?.status === 429 || String(error?.message || "").includes("429") || String(error?.message || "").toLowerCase().includes("rate limit");
-      if (!is429 || attempt === 2) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 5000 * (attempt + 1)));
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await ai.responses.create({
+          model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+          tools: [{ type: "web_search", search_context_size: "low" }],
+          input: prompt,
+          max_output_tokens: 2800
+        }, { signal: controller.signal });
+        break;
+      } catch (error: any) {
+        const isAbort = error?.name === "AbortError" || controller.signal.aborted;
+        if (isAbort) return fallbackReport(candidate, "The app returned a partial report instead of making you wait indefinitely.");
+        const is429 = error?.status === 429 || String(error?.message || "").toLowerCase().includes("rate limit");
+        if (!is429 || attempt === 1) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 4500));
+      }
     }
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!response) throw new Error("Deep research did not return a response.");
+  if (!response) return fallbackReport(candidate, "No complete AI response was returned inside the research budget.");
 
-  const raw = JSON.parse(cleanJson(response.output_text)) as any;
+  let raw: any;
+  try { raw = JSON.parse(cleanJson(response.output_text)); }
+  catch { return fallbackReport(candidate, "The research response was incomplete, so the app did not invent missing facts."); }
+
   const citations = actualCitationUrls(response);
   const sources: ResearchSource[] = [];
   for (const s of Array.isArray(raw?.sources) ? raw.sources : []) {
@@ -159,17 +221,10 @@ Return JSON only in this exact shape:
     volume: candidate.volume,
     bars: candidate.bars,
     technical: {
-      score: candidate.technicalScore,
-      vwap: candidate.vwap,
-      aboveVwap: candidate.aboveVwap,
-      rvol: candidate.rvol,
-      rvolVerified: candidate.rvolVerified,
-      distanceFromHodPct: candidate.distanceFromHodPct,
-      spreadPct: candidate.spreadPct,
-      volumeAcceleration: candidate.volumeAcceleration,
-      higherLows: candidate.higherLows,
-      reasons: candidate.technicalReasons,
-      warnings: candidate.warnings
+      score: candidate.technicalScore, vwap: candidate.vwap, aboveVwap: candidate.aboveVwap,
+      rvol: candidate.rvol, rvolVerified: candidate.rvolVerified, distanceFromHodPct: candidate.distanceFromHodPct,
+      spreadPct: candidate.spreadPct, volumeAcceleration: candidate.volumeAcceleration, higherLows: candidate.higherLows,
+      reasons: candidate.technicalReasons, warnings: candidate.warnings
     },
     verdict: raw?.verdict === "Strong" || raw?.verdict === "Avoid" ? raw.verdict : "Watch",
     confidence: Math.max(0, Math.min(100, Number(raw?.confidence) || 0)),
@@ -189,31 +244,29 @@ Return JSON only in this exact shape:
       guidance: String(fundamentals?.guidance || "Not verified"), competitivePosition: String(fundamentals?.competitivePosition || "Not verified")
     },
     priceVsBusinessDamage: {
-      conclusion: String(damage?.conclusion || "Not enough evidence"),
-      priceDamage: String(damage?.priceDamage || "Not established"),
+      conclusion: String(damage?.conclusion || "Not enough evidence"), priceDamage: String(damage?.priceDamage || "Not established"),
       businessDamage: String(damage?.businessDamage || "Not established"),
       assessment: ["Price damage worse", "Roughly aligned", "Business damage worse", "Not applicable"].includes(damage?.assessment) ? damage.assessment : "Not applicable"
     },
     capitalStructure: {
       risk: ["Low", "Medium", "High", "Unknown"].includes(capital?.risk) ? capital.risk : "Unknown",
-      summary: String(capital?.summary || "Not fully verified"),
-      flags: (Array.isArray(capital?.flags) ? capital.flags : []).map(String).slice(0, 10)
+      summary: String(capital?.summary || "Not fully verified"), flags: (Array.isArray(capital?.flags) ? capital.flags : []).map(String).slice(0, 6)
     },
     biotech: {
       relevant: Boolean(biotech?.relevant), scientificQuality: String(biotech?.scientificQuality || "Not applicable"),
       capitalQuality: String(biotech?.capitalQuality || "Not applicable"), trialContext: String(biotech?.trialContext || "Not applicable"),
       fdaStatus: String(biotech?.fdaStatus || "Not applicable"), cashRunway: String(biotech?.cashRunway || "Not applicable"),
-      warnings: (Array.isArray(biotech?.warnings) ? biotech.warnings : []).map(String).slice(0, 10)
+      warnings: (Array.isArray(biotech?.warnings) ? biotech.warnings : []).map(String).slice(0, 6)
     },
-    bullCase: (Array.isArray(raw?.bullCase) ? raw.bullCase : []).map(String).slice(0, 8),
-    bearCase: (Array.isArray(raw?.bearCase) ? raw.bearCase : []).map(String).slice(0, 8),
-    upcomingCatalysts: (Array.isArray(raw?.upcomingCatalysts) ? raw.upcomingCatalysts : []).map(String).slice(0, 8),
-    whatChangesThesis: (Array.isArray(raw?.whatChangesThesis) ? raw.whatChangesThesis : []).map(String).slice(0, 8),
+    bullCase: (Array.isArray(raw?.bullCase) ? raw.bullCase : []).map(String).slice(0, 5),
+    bearCase: (Array.isArray(raw?.bearCase) ? raw.bearCase : []).map(String).slice(0, 5),
+    upcomingCatalysts: (Array.isArray(raw?.upcomingCatalysts) ? raw.upcomingCatalysts : []).map(String).slice(0, 5),
+    whatChangesThesis: (Array.isArray(raw?.whatChangesThesis) ? raw.whatChangesThesis : []).map(String).slice(0, 5),
     preferredEntry: String(raw?.preferredEntry || "No actionable entry established"),
     invalidation: String(raw?.invalidation || "Not established"),
-    targets: (Array.isArray(raw?.targets) ? raw.targets : []).map(String).slice(0, 5),
+    targets: (Array.isArray(raw?.targets) ? raw.targets : []).map(String).slice(0, 4),
     riskReward: String(raw?.riskReward || "Not established"),
-    sources: sources.slice(0, 12),
-    news: candidate.news.slice(0, 10)
+    sources: sources.slice(0, 6),
+    news: candidate.news.slice(0, 6)
   };
 }
