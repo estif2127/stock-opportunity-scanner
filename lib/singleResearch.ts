@@ -46,10 +46,11 @@ function category(domain: string): ResearchSource["category"] {
   return "Other";
 }
 
-export function fallbackReport(candidate: Candidate, reason: string): SingleStockReport {
+export function fallbackReport(candidate: Candidate, reason: string, structured?: StructuredFundamentals): SingleStockReport {
+  const sf = structuredFallbacks(structured);
   return {
     ticker: candidate.ticker,
-    companyName: candidate.ticker,
+    companyName: structured?.companyName || candidate.ticker,
     generatedAt: new Date().toISOString(),
     currentPrice: candidate.currentPrice,
     changePct: candidate.changePct,
@@ -76,7 +77,16 @@ export function fallbackReport(candidate: Candidate, reason: string): SingleStoc
     thesis: `Research time budget was reached before primary-source verification finished. ${reason}`,
     whyMoving: candidate.news[0]?.title || "No fresh catalyst was verified inside the research time budget.",
     catalyst: { type: "Unclear", status: "Unconfirmed", freshness: "Unclear", qualityScore: 0, summary: "Needs primary-source confirmation." },
-    fundamentals: { revenue: "Not fully verified", earnings: "Not fully verified", margins: "Not fully verified", freeCashFlow: "Not fully verified", cashAndDebt: "Not fully verified", valuation: "Not fully verified", guidance: "Not fully verified", competitivePosition: "Not fully verified" },
+    fundamentals: {
+      revenue: sf?.revenue || "Not fully verified",
+      earnings: sf?.earnings || "Not fully verified",
+      margins: sf?.margins || "Not fully verified",
+      freeCashFlow: sf?.freeCashFlow || "Not fully verified",
+      cashAndDebt: sf?.cashAndDebt || "Not fully verified",
+      valuation: sf?.valuation || "Not fully verified",
+      guidance: "Not fully verified",
+      competitivePosition: sf?.competitivePosition || "Not fully verified"
+    },
     priceVsBusinessDamage: { conclusion: "Not enough verified evidence", priceDamage: "Not established", businessDamage: "Not established", assessment: "Not applicable" },
     capitalStructure: { risk: "Unknown", summary: "Not fully verified inside the time budget", flags: [] },
     biotech: { relevant: false, scientificQuality: "Not verified", capitalQuality: "Not verified", trialContext: "Not verified", fdaStatus: "Not verified", cashRunway: "Not verified", warnings: [] },
@@ -219,7 +229,7 @@ Return exactly:
         break;
       } catch (error: any) {
         const isAbort = error?.name === "AbortError" || controller.signal.aborted;
-        if (isAbort) return fallbackReport(candidate, "The app returned a partial report instead of making you wait indefinitely.");
+        if (isAbort) return fallbackReport(candidate, "The app returned a partial report instead of making you wait indefinitely.", structured);
         const is429 = error?.status === 429 || String(error?.message || "").toLowerCase().includes("rate limit");
         if (!is429 || attempt === 1) throw error;
         await new Promise((resolve) => setTimeout(resolve, 4500));
@@ -228,11 +238,11 @@ Return exactly:
   } finally {
     clearTimeout(timeout);
   }
-  if (!response) return fallbackReport(candidate, "No complete AI response was returned inside the research budget.");
+  if (!response) return fallbackReport(candidate, "No complete AI response was returned inside the research budget.", structured);
 
   let raw: any;
   try { raw = JSON.parse(cleanJson(response.output_text)); }
-  catch { return fallbackReport(candidate, "The research response was incomplete, so the app did not invent missing facts."); }
+  catch { return fallbackReport(candidate, "The research response was incomplete, so the app did not invent missing facts.", structured); }
 
   const citations = actualCitationUrls(response);
   const sources: ResearchSource[] = [];

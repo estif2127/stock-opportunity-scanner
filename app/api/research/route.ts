@@ -93,13 +93,15 @@ export async function POST(req: NextRequest) {
     // Pull normalized fundamentals directly from Tiingo before asking the model to interpret them.
     // This is fast and prevents large-cap fundamentals from disappearing when web research is slow.
     const structured = await getStructuredFundamentals(ticker);
+    console.info("[fundamentals]", ticker, { available: structured.available, period: structured.period, error: structured.error });
 
     const report = await Promise.race<SingleStockReport>([
       deepResearchStock(candidate, structured),
       new Promise<SingleStockReport>((resolve) =>
         setTimeout(() =>
           resolve(fallbackReport(candidate,
-            "The 60-second research budget was reached. A partial report was returned instead of waiting for the upstream research request."
+            "The 60-second research budget was reached. A partial report was returned instead of waiting for the upstream research request.",
+            structured
           )), HARD_ROUTE_BUDGET_MS)
       )
     ]);

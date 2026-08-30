@@ -1,19 +1,11 @@
-# v0.7 Structured Fundamentals Patch
+# v0.7.1 Fundamentals Timeout Fix
 
-Replace the included `app` and `lib` files in your existing stock-opportunity-scanner project.
+Fixes the case where Tiingo structured fundamentals were fetched successfully but then discarded when OpenAI deep research hit the time budget.
 
-What changed:
-- Pulls normalized fundamentals from Tiingo's Fundamentals API before AI synthesis.
-- Uses latest quarterly statement + prior-year comparable quarter for revenue growth.
-- Pulls revenue, net income/EPS, gross & operating margins, FCF/OCF, cash/debt, and daily valuation metrics when available.
-- Structured facts are passed to OpenAI as verified inputs rather than asking web search to rediscover them.
-- If AI omits a business field, the UI falls back directly to the Tiingo structured value.
-- If Tiingo Fundamentals is unavailable for a ticker/account, the app continues with SEC/web research rather than failing the entire report.
+Changes:
+- Timeout/partial reports now retain Tiingo revenue, earnings, margins, FCF, cash/debt and valuation.
+- Tiingo definition matching now checks both display names and dataCode values.
+- Tiingo fundamentals metadata is used for company name, sector, industry and reporting currency when available.
+- Vercel logs now show a safe fundamentals status line (available/period/error only; no API key).
 
-No new environment variables are needed.
-
-Push after replacement:
-
-    git add .
-    git commit -m "Use structured Tiingo fundamentals"
-    git push
+Copy `app` and `lib` into the existing project and replace files, then commit and push.

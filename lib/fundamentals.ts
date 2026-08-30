@@ -35,6 +35,15 @@ type Statement = {
     overview?: DataPoint[];
   };
 };
+
+type FundamentalMeta = {
+  ticker?: string;
+  name?: string;
+  sector?: string;
+  industry?: string;
+  reportingCurrency?: string;
+};
+
 type DailyFundamental = {
   date: string;
   marketCap?: number | null;
@@ -49,14 +58,14 @@ function norm(value: string) {
 }
 
 function buildCodeLookup(defs: Definition[]) {
-  const entries = defs.map((d) => ({ code: d.dataCode, name: norm(d.name || d.dataCode) }));
+  const entries = defs.map((d) => ({ code: d.dataCode, name: norm(d.name || d.dataCode), codeNorm: norm(d.dataCode) }));
   const find = (...names: string[]) => {
     for (const wanted of names.map(norm)) {
-      const exact = entries.find((e) => e.name === wanted);
+      const exact = entries.find((e) => e.name === wanted || e.codeNorm === wanted);
       if (exact) return exact.code;
     }
     for (const wanted of names.map(norm)) {
-      const fuzzy = entries.find((e) => e.name.includes(wanted) || wanted.includes(e.name));
+      const fuzzy = entries.find((e) => e.name.includes(wanted) || wanted.includes(e.name) || e.codeNorm.includes(wanted) || wanted.includes(e.codeNorm));
       if (fuzzy) return fuzzy.code;
     }
     return undefined;
@@ -109,12 +118,14 @@ export async function getStructuredFundamentals(ticker: string): Promise<Structu
     const nowDate = new Date();
     const statementStart = new Date(nowDate.getTime() - 850 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const dailyStart = new Date(nowDate.getTime() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const [defs, statements, daily] = await Promise.all([
+    const [defs, statements, daily, metaRows] = await Promise.all([
       fetchJson<Definition[]>("/tiingo/fundamentals/definitions"),
       fetchJson<Statement[]>(`/tiingo/fundamentals/${encoded}/statements?startDate=${statementStart}`),
-      fetchJson<DailyFundamental[]>(`/tiingo/fundamentals/${encoded}/daily?startDate=${dailyStart}`)
+      fetchJson<DailyFundamental[]>(`/tiingo/fundamentals/${encoded}/daily?startDate=${dailyStart}`),
+      fetchJson<FundamentalMeta[]>(`/tiingo/fundamentals/meta?ticker=${encoded}`).catch(() => [])
     ]);
 
+    const meta = (metaRows || []).find((m) => String(m.ticker || "").toUpperCase() === ticker.toUpperCase()) || (metaRows || [])[0];
     const latest = latestQuarter(statements || []);
     if (!latest) return { available: false, source: "Tiingo Fundamentals", error: "No quarterly statement returned." };
     const prior = comparable(statements || [], latest);
@@ -154,7 +165,10 @@ export async function getStructuredFundamentals(ticker: string): Promise<Structu
     return {
       available: true,
       source: "Tiingo Fundamentals",
-      reportingCurrency: "USD",
+      companyName: meta?.name,
+      sector: meta?.sector,
+      industry: meta?.industry,
+      reportingCurrency: meta?.reportingCurrency || "USD",
       period: `FY${latest.year} Q${latest.quarter}`,
       priorComparablePeriod: prior ? `FY${prior.year} Q${prior.quarter}` : undefined,
       revenue,
