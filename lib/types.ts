@@ -113,6 +113,33 @@ export type ResearchSource = {
   category: "SEC" | "Company" | "FDA" | "ClinicalTrials" | "News" | "Other";
 };
 
+
+export type QuickStockSnapshot = {
+  ticker: string;
+  generatedAt: string;
+  currentPrice: number;
+  changePct: number;
+  high: number;
+  low: number;
+  prevClose: number;
+  volume: number;
+  bars: Bar[];
+  technical: {
+    score: number;
+    vwap: number | null;
+    aboveVwap: boolean | null;
+    rvol: number | null;
+    rvolVerified: boolean;
+    distanceFromHodPct: number;
+    spreadPct: number | null;
+    volumeAcceleration: number | null;
+    higherLows: boolean | null;
+    reasons: string[];
+    warnings: string[];
+  };
+  news: NewsItem[];
+};
+
 export type SingleStockReport = {
   ticker: string;
   companyName: string;

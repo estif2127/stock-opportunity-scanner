@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import dynamic from "next/dynamic";
-import type { Candidate, SingleStockReport } from "@/lib/types";
+import type { Candidate, QuickStockSnapshot, SingleStockReport } from "@/lib/types";
 
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
 
@@ -38,8 +38,10 @@ export default function Home() {
   const [openTicker, setOpenTicker] = useState<string | null>(null);
 
   const [ticker, setTicker] = useState("");
+  const [quick, setQuick] = useState<QuickStockSnapshot | null>(null);
   const [report, setReport] = useState<SingleStockReport | null>(null);
   const [researchLoading, setResearchLoading] = useState(false);
+  const [deepLoading, setDeepLoading] = useState(false);
   const [researchError, setResearchError] = useState("");
 
   async function scan() {
@@ -57,18 +59,35 @@ export default function Home() {
     e?.preventDefault();
     const clean = ticker.trim().toUpperCase();
     if (!clean) return;
-    setTicker(clean); setResearchLoading(true); setResearchError(""); setReport(null);
+    setTicker(clean); setResearchLoading(true); setResearchError(""); setQuick(null); setReport(null);
     try {
       const res = await fetch("/api/research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: clean })
+        body: JSON.stringify({ ticker: clean, mode: "quick" })
       });
       const data = safeParse(await res.text(), res.status);
-      if (!res.ok) throw new Error(data.error || `Research failed (HTTP ${res.status})`);
-      setReport(data.report);
-    } catch (e) { setResearchError(e instanceof Error ? e.message : "Research failed"); }
+      if (!res.ok) throw new Error(data.error || `Snapshot failed (HTTP ${res.status})`);
+      setQuick(data.snapshot);
+    } catch (e) { setResearchError(e instanceof Error ? e.message : "Snapshot failed"); }
     finally { setResearchLoading(false); }
+  }
+
+  async function runDeepResearch() {
+    const clean = ticker.trim().toUpperCase();
+    if (!clean) return;
+    setDeepLoading(true); setResearchError("");
+    try {
+      const res = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: clean, mode: "deep" })
+      });
+      const data = safeParse(await res.text(), res.status);
+      if (!res.ok) throw new Error(data.error || `Deep research failed (HTTP ${res.status})`);
+      setReport(data.report);
+    } catch (e) { setResearchError(e instanceof Error ? e.message : "Deep research failed"); }
+    finally { setDeepLoading(false); }
   }
 
   return (
@@ -103,17 +122,19 @@ export default function Home() {
       ) : (
         <>
           <section className="workspaceIntro researchIntro">
-            <div><p className="kicker">DEEP DIVE</p><h1>Research one stock from market structure to business quality.</h1><p>Enter a ticker to combine current Tiingo technicals with SEC filings, earnings, company releases, FDA/clinical sources and reputable reporting.</p></div>
+            <div><p className="kicker">SINGLE STOCK</p><h1>Get the fast market snapshot first.</h1><p>Price, chart, VWAP, RVOL, HOD proximity and recent headlines load first. Run deep research only when you want filings, fundamentals, catalysts and capital-structure analysis.</p></div>
             <form className="tickerForm" onSubmit={researchStock}>
               <input aria-label="Ticker" value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="e.g. NVDA" maxLength={10}/>
-              <button className="primaryButton" disabled={researchLoading || !ticker.trim()}>{researchLoading ? "Researching…" : "Research stock"}</button>
+              <button className="primaryButton" disabled={researchLoading || !ticker.trim()}>{researchLoading ? "Loading snapshot…" : "Analyze stock"}</button>
             </form>
           </section>
 
-          {researchLoading && <LoadingPanel text="Pulling current technicals, then checking filings, fundamentals, catalysts, capital structure and primary sources."/>}
+          {researchLoading && <LoadingPanel text="Loading Tiingo market data, intraday structure and recent headlines. No AI research yet."/>}
           {researchError && <ErrorPanel text={researchError}/>} 
+          {quick && !report && <QuickResearchView snapshot={quick} deepLoading={deepLoading} onDeep={runDeepResearch}/>}
+          {deepLoading && <LoadingPanel text="Deep research is checking SEC filings, fundamentals, catalysts, dilution risk and primary sources. This is the slower step."/>}
           {report && <ResearchView report={report}/>} 
-          {!report && !researchLoading && !researchError && <EmptyResearch/>}
+          {!quick && !report && !researchLoading && !researchError && <EmptyResearch/>}
         </>
       )}
 
@@ -168,6 +189,32 @@ function CandidateCard({ c, rank, open, toggle }: { c: Candidate; rank: number; 
       {open && <StockChart bars={c.bars}/>} 
     </div>
   </article>;
+}
+
+function QuickResearchView({ snapshot, deepLoading, onDeep }: { snapshot: QuickStockSnapshot; deepLoading: boolean; onDeep: () => void }) {
+  return <div className="researchReport">
+    <section className="reportHero quickHero">
+      <div>
+        <div className="reportTickerLine"><span>{snapshot.ticker}</span><span className="quickBadge">QUICK SNAPSHOT</span></div>
+        <h2>{snapshot.ticker} market snapshot</h2>
+        <p>{snapshot.technical.reasons.join(" · ") || "Current intraday structure loaded from Tiingo."}</p>
+      </div>
+      <div className="quoteBlock"><strong>{money(snapshot.currentPrice)}</strong><span className={snapshot.changePct >= 0 ? "positive" : "negative"}>{snapshot.changePct >= 0 ? "+" : ""}{pct(snapshot.changePct)}</span><small>Technical {snapshot.technical.score}/100</small></div>
+    </section>
+
+    <section className="metricGrid reportMetrics">
+      <Metric label="Technical" value={`${snapshot.technical.score}/100`}/><Metric label="RVOL" value={snapshot.technical.rvolVerified && snapshot.technical.rvol ? `${snapshot.technical.rvol.toFixed(1)}x` : "Verify"}/><Metric label="From HOD" value={`-${pct(snapshot.technical.distanceFromHodPct)}`}/><Metric label="VWAP" value={snapshot.technical.aboveVwap == null ? "—" : snapshot.technical.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(snapshot.volume)}/><Metric label="HOD" value={money(snapshot.high)}/>
+    </section>
+
+    <section className="reportSection"><div className="sectionHeading inner"><div><p className="kicker">MARKET STRUCTURE</p><h2>Intraday chart</h2></div><span>LOD {money(snapshot.low)} · VWAP {money(snapshot.technical.vwap)}</span></div><StockChart bars={snapshot.bars}/></section>
+
+    <section className="reportGrid twoCol">
+      <ReportCard title="Technical read"><p>{snapshot.technical.reasons.join(" · ") || "No strong technical confirmation."}</p>{snapshot.technical.warnings.length > 0 && <BulletList items={snapshot.technical.warnings}/>}</ReportCard>
+      <ReportCard title="Recent headlines">{snapshot.news.length ? <ul className="headlineList">{snapshot.news.slice(0,5).map((n,i)=><li key={i}>{n.url ? <a href={n.url} target="_blank" rel="noreferrer">{n.title}</a> : n.title}<span>{n.source || "News"}{n.publishedDate ? ` · ${new Date(n.publishedDate).toLocaleString()}` : ""}</span></li>)}</ul> : <p className="muted">No recent Tiingo headlines returned.</p>}</ReportCard>
+    </section>
+
+    <section className="deepResearchCallout"><div><p className="kicker">OPTIONAL</p><h2>Need the full thesis?</h2><p>Deep Research checks SEC filings, earnings, fundamentals, catalyst verification, dilution/capital structure and biotech sources when relevant.</p></div><button className="primaryButton" onClick={onDeep} disabled={deepLoading}>{deepLoading ? "Researching…" : "Run deep research"}</button></section>
+  </div>;
 }
 
 function ResearchView({ report }: { report: SingleStockReport }) {

@@ -1,11 +1,22 @@
-Opportunity Scanner v0.3 upgrade
+Stock Opportunity Scanner v0.4 — Fast Single Stock Research
 
-1. Copy the app, components, and lib folders into your existing stock-opportunity-scanner folder.
-2. Choose Replace files when Windows asks.
-3. In CMD inside your project folder run:
+What changed
+- Single-stock mode now loads a QUICK SNAPSHOT first using Tiingo only.
+- Quick snapshot shows price, change, chart, VWAP, RVOL, HOD distance, volume, technical score, warnings, and recent headlines.
+- OpenAI is NOT called for the quick snapshot.
+- A separate Run Deep Research button triggers SEC/fundamental/catalyst/capital-structure research.
+- Deep reports are cached in the running server instance for 45 minutes.
+- Deep research uses a smaller web-search context and output budget.
+- 429 rate-limit errors automatically retry up to two times with short backoff.
+
+Install
+1. Unzip this patch.
+2. Copy the app and lib folders into your existing stock-opportunity-scanner folder.
+3. Choose Replace files.
+4. In CMD inside your project folder run:
    git add .
-   git commit -m "Add single stock research and professional redesign"
+   git commit -m "Make single stock research fast"
    git push
-4. Vercel will redeploy automatically.
+5. Vercel should redeploy automatically.
 
-No new environment variables are required.
+No new API keys or Vercel environment variables are needed.

@@ -111,12 +111,23 @@ Return JSON only in this exact shape:
   "sources":[{"title":"","url":"https://...","domain":""}]
 }`;
 
-  const response = await ai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
-    tools: [{ type: "web_search", search_context_size: "medium" }],
-    input: prompt,
-    max_output_tokens: 8000
-  });
+  let response: any;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await ai.responses.create({
+        model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+        tools: [{ type: "web_search", search_context_size: "low" }],
+        input: prompt,
+        max_output_tokens: 5000
+      });
+      break;
+    } catch (error: any) {
+      const is429 = error?.status === 429 || String(error?.message || "").includes("429") || String(error?.message || "").toLowerCase().includes("rate limit");
+      if (!is429 || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5000 * (attempt + 1)));
+    }
+  }
+  if (!response) throw new Error("Deep research did not return a response.");
 
   const raw = JSON.parse(cleanJson(response.output_text)) as any;
   const citations = actualCitationUrls(response);
