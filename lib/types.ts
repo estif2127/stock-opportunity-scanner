@@ -105,3 +105,87 @@ export type Candidate = {
     confidence: number;
   };
 };
+
+export type ResearchSource = {
+  title: string;
+  url: string;
+  domain: string;
+  category: "SEC" | "Company" | "FDA" | "ClinicalTrials" | "News" | "Other";
+};
+
+export type SingleStockReport = {
+  ticker: string;
+  companyName: string;
+  generatedAt: string;
+  currentPrice: number;
+  changePct: number;
+  high: number;
+  low: number;
+  prevClose: number;
+  volume: number;
+  bars: Bar[];
+  technical: {
+    score: number;
+    vwap: number | null;
+    aboveVwap: boolean | null;
+    rvol: number | null;
+    rvolVerified: boolean;
+    distanceFromHodPct: number;
+    spreadPct: number | null;
+    volumeAcceleration: number | null;
+    higherLows: boolean | null;
+    reasons: string[];
+    warnings: string[];
+  };
+  verdict: "Strong" | "Watch" | "Avoid";
+  confidence: number;
+  thesis: string;
+  whyMoving: string;
+  catalyst: {
+    type: string;
+    status: "Confirmed" | "Partially confirmed" | "Unconfirmed";
+    freshness: string;
+    qualityScore: number;
+    summary: string;
+  };
+  fundamentals: {
+    revenue: string;
+    earnings: string;
+    margins: string;
+    freeCashFlow: string;
+    cashAndDebt: string;
+    valuation: string;
+    guidance: string;
+    competitivePosition: string;
+  };
+  priceVsBusinessDamage: {
+    conclusion: string;
+    priceDamage: string;
+    businessDamage: string;
+    assessment: "Price damage worse" | "Roughly aligned" | "Business damage worse" | "Not applicable";
+  };
+  capitalStructure: {
+    risk: "Low" | "Medium" | "High" | "Unknown";
+    summary: string;
+    flags: string[];
+  };
+  biotech: {
+    relevant: boolean;
+    scientificQuality: string;
+    capitalQuality: string;
+    trialContext: string;
+    fdaStatus: string;
+    cashRunway: string;
+    warnings: string[];
+  };
+  bullCase: string[];
+  bearCase: string[];
+  upcomingCatalysts: string[];
+  whatChangesThesis: string[];
+  preferredEntry: string;
+  invalidation: string;
+  targets: string[];
+  riskReward: string;
+  sources: ResearchSource[];
+  news: NewsItem[];
+};

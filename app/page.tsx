@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import dynamic from "next/dynamic";
-import type { Candidate } from "@/lib/types";
+import type { Candidate, SingleStockReport } from "@/lib/types";
 
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
 
@@ -10,186 +11,222 @@ type ScanResult = {
   status: "OPPORTUNITIES_FOUND" | "NO_TRADE";
   generatedAt: string;
   elapsedMs: number;
-  dataLabel: string;
-  researchLabel?: string;
-  limitations: string[];
   stats: { snapshots: number; discoveryPassed: number; deepValidated: number; researched?: number; finalists: number };
   candidates: Candidate[];
 };
 
 const money = (v: number | null | undefined) => v == null ? "—" : `$${v.toFixed(2)}`;
 const pct = (v: number | null | undefined, digits = 1) => v == null ? "—" : `${v.toFixed(digits)}%`;
-const compact = (v: number) => Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(v);
+const compact = (v: number | null | undefined) => v == null ? "—" : Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(v);
 
-function ratingClass(r?: string) {
-  if (r === "Strong") return "strong";
-  if (r === "Avoid") return "avoid";
-  return "watch";
+function verdictClass(v?: string) {
+  if (v === "Strong") return "statusGood";
+  if (v === "Avoid") return "statusBad";
+  return "statusWatch";
 }
 
-function catalystClass(status?: string) {
-  if (status === "Confirmed") return "confirmed";
-  if (status === "Partially confirmed") return "partial";
-  return "unconfirmed";
+function safeParse(raw: string, status: number) {
+  try { return JSON.parse(raw); }
+  catch { throw new Error(raw?.slice(0, 260) || `Server returned HTTP ${status}`); }
 }
 
 export default function Home() {
-  const [result, setResult] = useState<ScanResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [mode, setMode] = useState<"scan" | "research">("scan");
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanError, setScanError] = useState("");
   const [openTicker, setOpenTicker] = useState<string | null>(null);
 
+  const [ticker, setTicker] = useState("");
+  const [report, setReport] = useState<SingleStockReport | null>(null);
+  const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState("");
+
   async function scan() {
-    setLoading(true); setError(""); setResult(null); setOpenTicker(null);
+    setScanLoading(true); setScanError(""); setScanResult(null); setOpenTicker(null);
     try {
       const res = await fetch("/api/scan", { method: "POST" });
-      const raw = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        throw new Error(raw?.slice(0, 240) || `Server returned HTTP ${res.status}`);
-      }
+      const data = safeParse(await res.text(), res.status);
       if (!res.ok) throw new Error(data.error || `Scan failed (HTTP ${res.status})`);
-      setResult(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Scan failed");
-    } finally { setLoading(false); }
+      setScanResult(data);
+    } catch (e) { setScanError(e instanceof Error ? e.message : "Scan failed"); }
+    finally { setScanLoading(false); }
+  }
+
+  async function researchStock(e?: FormEvent) {
+    e?.preventDefault();
+    const clean = ticker.trim().toUpperCase();
+    if (!clean) return;
+    setTicker(clean); setResearchLoading(true); setResearchError(""); setReport(null);
+    try {
+      const res = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: clean })
+      });
+      const data = safeParse(await res.text(), res.status);
+      if (!res.ok) throw new Error(data.error || `Research failed (HTTP ${res.status})`);
+      setReport(data.report);
+    } catch (e) { setResearchError(e instanceof Error ? e.message : "Research failed"); }
+    finally { setResearchLoading(false); }
   }
 
   return (
-    <main>
-      <header className="topbar">
-        <div className="brand"><span className="pulse" /> OPPORTUNITY SCANNER</div>
-        <div className="data-pill">TIINGO · PRIMARY-SOURCE RESEARCH</div>
+    <main className="appShell">
+      <header className="appHeader">
+        <div className="brandBlock">
+          <div className="brandMark">OS</div>
+          <div><strong>Opportunity Scanner</strong><span>Equity research workspace</span></div>
+        </div>
+        <div className="headerMeta"><span className="liveDot"/>Tiingo market data <span className="divider">·</span> Primary-source research</div>
       </header>
 
-      <section className="hero">
-        <div>
-          <p className="eyebrow">MOMENTUM + CATALYST ENGINE · V0.2</p>
-          <h1>Find setups worth<br/><span>paying attention to.</span></h1>
-          <p className="sub">Market discovery, intraday validation, then primary-source catalyst research. SEC, company releases, FDA and ClinicalTrials evidence can now affect the final rating.</p>
-        </div>
-        <button className="scanButton" onClick={scan} disabled={loading}>
-          {loading ? <><span className="spinner"/> RESEARCHING MARKET</> : <>SCAN MARKET <span>↗</span></>}
-        </button>
-      </section>
+      <nav className="modeTabs" aria-label="Research modes">
+        <button className={mode === "scan" ? "active" : ""} onClick={() => setMode("scan")}>Market Scanner</button>
+        <button className={mode === "research" ? "active" : ""} onClick={() => setMode("research")}>Single Stock Research</button>
+      </nav>
 
-      <section className="rules">
-        <span>$1–$50</span><span>+5%+</span><span>1M+ VOL</span><span>RVOL</span><span>VWAP</span><span>HOD</span><span>SEC</span><span>FDA</span><span>TRIALS</span><span>DILUTION</span>
-      </section>
-
-      {loading && <section className="loadingPanel"><div className="scannerLine"/><p>Filtering the market → validating intraday bars → checking news → verifying primary sources → ranking finalists…</p></section>}
-      {error && <section className="error"><strong>Scan failed:</strong> {error}<br/><small>If this mentions a timeout, redeploy with the v0.2.1 patch. If it names Tiingo or OpenAI specifically, then check that service/key.</small></section>}
-
-      {result && (
+      {mode === "scan" ? (
         <>
-          <section className={`verdict ${result.status === "NO_TRADE" ? "noTrade" : "hasTrades"}`}>
-            <div>
-              <p className="eyebrow">SCAN VERDICT</p>
-              <h2>{result.status === "NO_TRADE" ? "NO TRADE" : "OPPORTUNITIES FOUND"}</h2>
-              <p>{result.status === "NO_TRADE" ? "No finalist cleared technical quality + confirmed catalyst + capital-risk standards. Standards were not lowered." : "At least one finalist cleared the current technical and catalyst thresholds. Broker confirmation is still required."}</p>
-            </div>
-            <div className="stats">
-              <div><b>{compact(result.stats.snapshots)}</b><span>snapshots</span></div>
-              <div><b>{result.stats.discoveryPassed}</b><span>discovery</span></div>
-              <div><b>{result.stats.deepValidated}</b><span>validated</span></div>
-              <div><b>{result.stats.researched ?? 0}</b><span>researched</span></div>
-              <div><b>{(result.elapsedMs/1000).toFixed(1)}s</b><span>scan time</span></div>
-            </div>
+          <section className="workspaceIntro">
+            <div><p className="kicker">MARKET DISCOVERY</p><h1>Surface only the setups that justify attention.</h1><p>Discovery filters narrow the market first. Intraday structure and primary-source catalyst verification determine what survives.</p></div>
+            <button className="primaryButton" onClick={scan} disabled={scanLoading}>{scanLoading ? "Scanning market…" : "Run market scan"}</button>
           </section>
 
-          <section className="resultsHeader"><h2>Ranked finalists</h2><p>{new Date(result.generatedAt).toLocaleString()}</p></section>
+          <div className="filterBar"><span>$1–$50</span><span>+5% minimum</span><span>1M+ volume</span><span>RVOL</span><span>VWAP</span><span>HOD proximity</span><span>SEC / FDA verification</span></div>
 
-          <section className="cards">
-            {result.candidates.map((c, i) => (
-              <article className="card" key={c.ticker}>
-                <div className="cardTop">
-                  <div className="rank">#{i+1}</div>
-                  <div className="tickerBlock"><h3>{c.ticker}</h3><span>{money(c.currentPrice)}</span></div>
-                  <div className="move">+{pct(c.changePct)}</div>
-                  <div className={`rating ${ratingClass(c.ai?.rating)}`}>{c.ai?.rating || "Watch"}</div>
-                </div>
+          {scanLoading && <LoadingPanel text="Screening market data, validating intraday structure, then researching the strongest finalists."/>}
+          {scanError && <ErrorPanel text={scanError}/>} 
 
-                <div className="scoreRow">
-                  <div><span>TECHNICAL</span><b>{c.technicalScore}/100</b></div>
-                  <div><span>CATALYST</span><b>{c.research ? `${c.research.significanceScore}/100` : "VERIFY"}</b></div>
-                  <div><span>RVOL</span><b>{c.rvolVerified && c.rvol ? `${c.rvol.toFixed(1)}x` : "VERIFY"}</b></div>
-                  <div><span>FROM HOD</span><b>-{pct(c.distanceFromHodPct)}</b></div>
-                  <div><span>VWAP</span><b className={c.aboveVwap ? "goodText" : "badText"}>{c.aboveVwap == null ? "—" : c.aboveVwap ? "ABOVE" : "BELOW"}</b></div>
-                  <div><span>VOLUME</span><b>{compact(c.volume)}</b></div>
-                </div>
-
-                {c.research && (
-                  <section className="catalystPanel">
-                    <div className="catalystTop">
-                      <div>
-                        <span className="miniLabel">PRIMARY-SOURCE CATALYST</span>
-                        <h4>{c.research.catalystType}</h4>
-                      </div>
-                      <div className={`catalystBadge ${catalystClass(c.research.status)}`}>{c.research.status}</div>
-                    </div>
-                    <p>{c.research.summary}</p>
-                    <div className="researchMeta">
-                      <span>Source quality <b>{c.research.sourceQuality}</b></span>
-                      <span>Freshness <b>{c.research.freshness}</b></span>
-                      <span>Company <b>{c.research.companyName}</b></span>
-                    </div>
-
-                    {c.research.dilutionFlags.length > 0 && (
-                      <div className="riskBox"><b>⚠ CAPITAL / DILUTION FLAGS</b>{c.research.dilutionFlags.map((x, idx) => <p key={idx}>• {x}</p>)}</div>
-                    )}
-
-                    {c.research.secFindings.length > 0 && (
-                      <div className="evidenceBox"><b>SEC FINDINGS</b>{c.research.secFindings.map((x, idx) => <p key={idx}>• {x}</p>)}</div>
-                    )}
-
-                    {c.research.biotech.relevant && (
-                      <div className="biotechBox">
-                        <b>🧬 BIOTECH VERIFICATION</b>
-                        <p>{c.research.biotech.fdaSummary}</p>
-                        {c.research.biotech.smallDatasetWarning && <p className="warningText">⚠ Small patient dataset — do not treat as equivalent to a large randomized trial.</p>}
-                        {c.research.biotech.trials.map((t, idx) => <p key={idx}>• {t.nctId || "Trial"} · {t.phase || "phase unknown"} · n={t.enrollment ?? "?"} · {t.status || "status unknown"}{t.summary ? ` — ${t.summary}` : ""}</p>)}
-                      </div>
-                    )}
-
-                    {c.research.primarySources.length > 0 && (
-                      <div className="primarySources">
-                        {c.research.primarySources.map((s, idx) => <a key={idx} href={s.url} target="_blank" rel="noreferrer"><span>{s.sourceType}</span><b>{s.title}</b><small>{s.domain}</small></a>)}
-                      </div>
-                    )}
-                  </section>
-                )}
-
-                <p className="summary">{c.ai?.summary || c.technicalReasons.join(" · ") || "Needs confirmation"}</p>
-
-                <div className="analysisGrid">
-                  <div><label>WHY IT'S MOVING</label><p>{c.ai?.whyMoving || "Needs catalyst confirmation"}</p></div>
-                  <div><label>CATALYST</label><p>{c.ai?.catalyst || "No verified catalyst"}</p></div>
-                  <div><label>CAPITAL STRUCTURE</label><p>{c.ai?.capitalStructureRisk || "Unverified"}</p></div>
-                  <div><label>ENTRY TRIGGER</label><p>{c.ai?.entryTrigger || "No actionable entry"}</p></div>
-                  <div><label>INVALIDATION</label><p>{c.ai?.invalidation || "Needs confirmation"}</p></div>
-                  <div><label>RISK / REWARD</label><p>{c.ai?.riskReward || "Not established"}</p></div>
-                  <div><label>MAJOR RISK</label><p>{c.ai?.majorRisk || c.warnings.join("; ")}</p></div>
-                </div>
-
-                {c.ai?.targets?.length ? <div className="targets"><label>TARGETS</label>{c.ai.targets.map((t, x) => <span key={x}>{t}</span>)}</div> : null}
-
-                <button className="chartToggle" onClick={() => setOpenTicker(openTicker === c.ticker ? null : c.ticker)}>
-                  {openTicker === c.ticker ? "HIDE CHART" : "VIEW INTRADAY CHART"} <span>⌁</span>
-                </button>
-                {openTicker === c.ticker && <StockChart bars={c.bars} />}
-
-                {c.news.length > 0 && <details><summary>Tiingo news discovery sources ({c.news.length})</summary><div className="newsList">{c.news.map((n, x) => <a key={x} href={n.url} target="_blank" rel="noreferrer"><b>{n.title}</b><span>{n.source} · {n.publishedDate ? new Date(n.publishedDate).toLocaleString() : ""}</span></a>)}</div></details>}
-              </article>
-            ))}
+          {scanResult && <ScanView result={scanResult} openTicker={openTicker} setOpenTicker={setOpenTicker}/>} 
+        </>
+      ) : (
+        <>
+          <section className="workspaceIntro researchIntro">
+            <div><p className="kicker">DEEP DIVE</p><h1>Research one stock from market structure to business quality.</h1><p>Enter a ticker to combine current Tiingo technicals with SEC filings, earnings, company releases, FDA/clinical sources and reputable reporting.</p></div>
+            <form className="tickerForm" onSubmit={researchStock}>
+              <input aria-label="Ticker" value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="e.g. NVDA" maxLength={10}/>
+              <button className="primaryButton" disabled={researchLoading || !ticker.trim()}>{researchLoading ? "Researching…" : "Research stock"}</button>
+            </form>
           </section>
 
-          <section className="limitations"><strong>DATA / RISK NOTES</strong>{result.limitations.map((x, i) => <p key={i}>• {x}</p>)}<p>• Market feed: {result.dataLabel}</p>{result.researchLabel && <p>• Research: {result.researchLabel}</p>}</section>
+          {researchLoading && <LoadingPanel text="Pulling current technicals, then checking filings, fundamentals, catalysts, capital structure and primary sources."/>}
+          {researchError && <ErrorPanel text={researchError}/>} 
+          {report && <ResearchView report={report}/>} 
+          {!report && !researchLoading && !researchError && <EmptyResearch/>}
         </>
       )}
 
-      <footer>Research scanner only · Not financial advice · Always confirm executable prices and primary filings yourself.</footer>
+      <footer>Research assistance only. Verify live prices, filings and material facts independently before making financial decisions.</footer>
     </main>
   );
 }
+
+function LoadingPanel({ text }: { text: string }) {
+  return <section className="noticePanel loadingNotice"><div className="progressTrack"><div/></div><strong>Working</strong><p>{text}</p></section>;
+}
+
+function ErrorPanel({ text }: { text: string }) {
+  return <section className="noticePanel errorNotice"><strong>Request failed</strong><p>{text}</p></section>;
+}
+
+function ScanView({ result, openTicker, setOpenTicker }: { result: ScanResult; openTicker: string | null; setOpenTicker: (x: string | null) => void }) {
+  return <>
+    <section className="verdictPanel">
+      <div><p className="kicker">SCAN VERDICT</p><h2>{result.status === "NO_TRADE" ? "No qualifying setup" : "Opportunities found"}</h2><p>{result.status === "NO_TRADE" ? "No finalist cleared the current technical, catalyst and capital-risk standards. The threshold was not lowered." : "At least one finalist cleared the current quality threshold. Review the evidence before acting."}</p></div>
+      <div className="statStrip">
+        <Metric label="Snapshots" value={compact(result.stats.snapshots)}/><Metric label="Discovery" value={String(result.stats.discoveryPassed)}/><Metric label="Validated" value={String(result.stats.deepValidated)}/><Metric label="Researched" value={String(result.stats.researched ?? 0)}/><Metric label="Duration" value={`${(result.elapsedMs/1000).toFixed(1)}s`}/>
+      </div>
+    </section>
+
+    <section className="sectionHeading"><div><p className="kicker">FINALISTS</p><h2>Ranked candidates</h2></div><span>{new Date(result.generatedAt).toLocaleString()}</span></section>
+
+    {result.candidates.length === 0 ? <div className="emptyState">No candidates survived the discovery and validation process.</div> : <div className="candidateList">
+      {result.candidates.map((c, i) => <CandidateCard key={c.ticker} c={c} rank={i+1} open={openTicker === c.ticker} toggle={() => setOpenTicker(openTicker === c.ticker ? null : c.ticker)}/>) }
+    </div>}
+  </>;
+}
+
+function CandidateCard({ c, rank, open, toggle }: { c: Candidate; rank: number; open: boolean; toggle: () => void }) {
+  return <article className="candidateCard">
+    <div className="candidateHeader">
+      <div className="rankBadge">{rank}</div>
+      <div className="candidateIdentity"><strong>{c.ticker}</strong><span>{money(c.currentPrice)} · <em>{c.changePct >= 0 ? "+" : ""}{pct(c.changePct)}</em></span></div>
+      <span className={`statusPill ${verdictClass(c.ai?.rating)}`}>{c.ai?.rating || "Watch"}</span>
+    </div>
+    <div className="metricGrid compactMetrics"><Metric label="Technical" value={`${c.technicalScore}/100`}/><Metric label="Catalyst" value={c.research ? `${c.research.significanceScore}/100` : "Verify"}/><Metric label="RVOL" value={c.rvolVerified && c.rvol ? `${c.rvol.toFixed(1)}x` : "Verify"}/><Metric label="From HOD" value={`-${pct(c.distanceFromHodPct)}`}/><Metric label="VWAP" value={c.aboveVwap == null ? "—" : c.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(c.volume)}/></div>
+    <div className="candidateBody">
+      <div className="summaryBlock"><p className="kicker">ASSESSMENT</p><p>{c.ai?.summary || c.research?.summary || c.technicalReasons.join(" · ") || "Needs confirmation."}</p></div>
+      <div className="detailColumns">
+        <TextBlock label="Why it's moving" text={c.ai?.whyMoving || c.research?.summary || "No verified fresh catalyst."}/>
+        <TextBlock label="Capital structure" text={c.ai?.capitalStructureRisk || (c.research?.dilutionFlags.length ? c.research.dilutionFlags.join("; ") : "Not fully verified")}/>
+        <TextBlock label="Preferred trigger" text={c.ai?.entryTrigger || "No actionable entry established"}/>
+        <TextBlock label="Invalidation" text={c.ai?.invalidation || "Not established"}/>
+      </div>
+      {c.research?.primarySources?.length ? <SourceLinks sources={c.research.primarySources.map(s => ({...s, category: s.sourceType})) as any}/> : null}
+      <button className="secondaryButton" onClick={toggle}>{open ? "Hide intraday chart" : "View intraday chart"}</button>
+      {open && <StockChart bars={c.bars}/>} 
+    </div>
+  </article>;
+}
+
+function ResearchView({ report }: { report: SingleStockReport }) {
+  return <div className="researchReport">
+    <section className="reportHero">
+      <div>
+        <div className="reportTickerLine"><span>{report.ticker}</span><span className={`statusPill ${verdictClass(report.verdict)}`}>{report.verdict}</span></div>
+        <h2>{report.companyName}</h2>
+        <p>{report.thesis}</p>
+      </div>
+      <div className="quoteBlock"><strong>{money(report.currentPrice)}</strong><span className={report.changePct >= 0 ? "positive" : "negative"}>{report.changePct >= 0 ? "+" : ""}{pct(report.changePct)}</span><small>Confidence {report.confidence}/100</small></div>
+    </section>
+
+    <section className="metricGrid reportMetrics">
+      <Metric label="Technical" value={`${report.technical.score}/100`}/><Metric label="Catalyst" value={`${report.catalyst.qualityScore}/100`}/><Metric label="RVOL" value={report.technical.rvolVerified && report.technical.rvol ? `${report.technical.rvol.toFixed(1)}x` : "Verify"}/><Metric label="From HOD" value={`-${pct(report.technical.distanceFromHodPct)}`}/><Metric label="VWAP" value={report.technical.aboveVwap == null ? "—" : report.technical.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(report.volume)}/>
+    </section>
+
+    <section className="reportSection"><div className="sectionHeading inner"><div><p className="kicker">MARKET STRUCTURE</p><h2>Intraday chart</h2></div><span>HOD {money(report.high)} · LOD {money(report.low)}</span></div><StockChart bars={report.bars}/></section>
+
+    <section className="reportGrid twoCol">
+      <ReportCard title="Why the stock is moving"><p>{report.whyMoving}</p></ReportCard>
+      <ReportCard title="Catalyst verification"><div className="cardLine"><span>{report.catalyst.type}</span><span className="muted">{report.catalyst.status} · {report.catalyst.freshness}</span></div><p>{report.catalyst.summary}</p></ReportCard>
+    </section>
+
+    <section className="reportSection">
+      <div className="sectionHeading inner"><div><p className="kicker">BUSINESS QUALITY</p><h2>Fundamentals</h2></div></div>
+      <div className="fundamentalGrid">
+        <TextBlock label="Revenue / growth" text={report.fundamentals.revenue}/><TextBlock label="Earnings" text={report.fundamentals.earnings}/><TextBlock label="Margins" text={report.fundamentals.margins}/><TextBlock label="Free cash flow" text={report.fundamentals.freeCashFlow}/><TextBlock label="Cash & debt" text={report.fundamentals.cashAndDebt}/><TextBlock label="Valuation" text={report.fundamentals.valuation}/><TextBlock label="Guidance" text={report.fundamentals.guidance}/><TextBlock label="Competitive position" text={report.fundamentals.competitivePosition}/>
+      </div>
+    </section>
+
+    <section className="damagePanel">
+      <div><p className="kicker">PRICE DAMAGE VS BUSINESS DAMAGE</p><h2>{report.priceVsBusinessDamage.assessment}</h2><p>{report.priceVsBusinessDamage.conclusion}</p></div>
+      <div className="damageCompare"><TextBlock label="Price damage" text={report.priceVsBusinessDamage.priceDamage}/><TextBlock label="Business damage" text={report.priceVsBusinessDamage.businessDamage}/></div>
+    </section>
+
+    <section className="reportGrid twoCol">
+      <ReportCard title="Capital structure" badge={report.capitalStructure.risk}><p>{report.capitalStructure.summary}</p>{report.capitalStructure.flags.length > 0 && <BulletList items={report.capitalStructure.flags}/>}</ReportCard>
+      <ReportCard title="Technical timing"><p>{report.technical.reasons.join(" · ") || "No strong technical confirmation."}</p>{report.technical.warnings.length > 0 && <BulletList items={report.technical.warnings}/>}</ReportCard>
+    </section>
+
+    {report.biotech.relevant && <section className="reportSection"><div className="sectionHeading inner"><div><p className="kicker">BIOTECH / CLINICAL</p><h2>Scientific quality vs stock quality</h2></div></div><div className="reportGrid twoCol"><ReportCard title="Scientific / clinical"><p>{report.biotech.scientificQuality}</p><p>{report.biotech.trialContext}</p><p>{report.biotech.fdaStatus}</p></ReportCard><ReportCard title="Capital quality"><p>{report.biotech.capitalQuality}</p><p>{report.biotech.cashRunway}</p>{report.biotech.warnings.length > 0 && <BulletList items={report.biotech.warnings}/>}</ReportCard></div></section>}
+
+    <section className="reportGrid twoCol">
+      <ReportCard title="Bull case"><BulletList items={report.bullCase}/></ReportCard>
+      <ReportCard title="Bear case"><BulletList items={report.bearCase}/></ReportCard>
+      <ReportCard title="Upcoming catalysts"><BulletList items={report.upcomingCatalysts}/></ReportCard>
+      <ReportCard title="What changes the thesis"><BulletList items={report.whatChangesThesis}/></ReportCard>
+    </section>
+
+    <section className="executionPanel"><div><span>Preferred entry / trigger</span><strong>{report.preferredEntry}</strong></div><div><span>Invalidation</span><strong>{report.invalidation}</strong></div><div><span>Risk / reward</span><strong>{report.riskReward}</strong></div>{report.targets.length > 0 && <div><span>Potential targets</span><strong>{report.targets.join(" · ")}</strong></div>}</section>
+
+    {report.sources.length > 0 && <section className="reportSection"><div className="sectionHeading inner"><div><p className="kicker">EVIDENCE</p><h2>Sources reviewed</h2></div></div><SourceLinks sources={report.sources}/></section>}
+  </div>;
+}
+
+function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div>; }
+function TextBlock({ label, text }: { label: string; text: string }) { return <div className="textBlock"><span>{label}</span><p>{text}</p></div>; }
+function ReportCard({ title, badge, children }: { title: string; badge?: string; children: ReactNode }) { return <article className="reportCard"><div className="reportCardTitle"><h3>{title}</h3>{badge && <span>{badge}</span>}</div>{children}</article>; }
+function BulletList({ items }: { items: string[] }) { return items.length ? <ul className="bulletList">{items.map((x,i) => <li key={i}>{x}</li>)}</ul> : <p className="muted">No material items identified.</p>; }
+function SourceLinks({ sources }: { sources: { title: string; url: string; domain: string; category?: string }[] }) { return <div className="sourceGrid">{sources.map((s,i) => <a key={`${s.url}-${i}`} href={s.url} target="_blank" rel="noreferrer"><span>{s.category || "Source"}</span><strong>{s.title}</strong><small>{s.domain}</small></a>)}</div>; }
+function EmptyResearch() { return <section className="emptyResearch"><div className="emptyMonogram">R</div><h2>Start with a ticker.</h2><p>Use this mode when you already have a stock in mind and want a deeper answer than the market-wide scanner provides.</p><div><span>Fundamentals</span><span>SEC / dilution</span><span>Catalysts</span><span>Technicals</span><span>Biotech if relevant</span></div></section>; }
