@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllSnapshots, getBars, getNews } from "@/lib/tiingo";
 import { buildCandidate } from "@/lib/technicals";
 import { deepResearchStock, fallbackReport } from "@/lib/singleResearch";
+import { getStructuredFundamentals } from "@/lib/fundamentals";
 import type { Candidate, QuickStockSnapshot, SingleStockReport } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -89,8 +90,12 @@ export async function POST(req: NextRequest) {
     // Even if an upstream web-search request ignores/defers abort, the API returns a
     // conservative partial report to the browser after ~65 seconds.
     const HARD_ROUTE_BUDGET_MS = 65_000;
+    // Pull normalized fundamentals directly from Tiingo before asking the model to interpret them.
+    // This is fast and prevents large-cap fundamentals from disappearing when web research is slow.
+    const structured = await getStructuredFundamentals(ticker);
+
     const report = await Promise.race<SingleStockReport>([
-      deepResearchStock(candidate),
+      deepResearchStock(candidate, structured),
       new Promise<SingleStockReport>((resolve) =>
         setTimeout(() =>
           resolve(fallbackReport(candidate,

@@ -106,6 +106,41 @@ export type Candidate = {
   };
 };
 
+
+export type StructuredFundamentals = {
+  available: boolean;
+  source: string;
+  companyName?: string;
+  sector?: string;
+  industry?: string;
+  reportingCurrency?: string;
+  period?: string;
+  priorComparablePeriod?: string;
+  revenue?: number | null;
+  revenueGrowthYoY?: number | null;
+  netIncome?: number | null;
+  epsDiluted?: number | null;
+  grossProfit?: number | null;
+  grossMarginPct?: number | null;
+  operatingIncome?: number | null;
+  operatingMarginPct?: number | null;
+  freeCashFlow?: number | null;
+  operatingCashFlow?: number | null;
+  capex?: number | null;
+  cash?: number | null;
+  shortTermInvestments?: number | null;
+  shortTermDebt?: number | null;
+  longTermDebt?: number | null;
+  totalDebt?: number | null;
+  marketCap?: number | null;
+  enterpriseValue?: number | null;
+  peRatio?: number | null;
+  pbRatio?: number | null;
+  trailingPEG1Y?: number | null;
+  sharesDiluted?: number | null;
+  error?: string;
+};
+
 export type ResearchSource = {
   title: string;
   url: string;
