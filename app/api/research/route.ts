@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllSnapshots, getBars, getNews } from "@/lib/tiingo";
 import { buildCandidate } from "@/lib/technicals";
-import { deepResearchStock } from "@/lib/singleResearch";
+import { deepResearchStock, fallbackReport } from "@/lib/singleResearch";
 import type { Candidate, QuickStockSnapshot, SingleStockReport } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -85,7 +85,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ snapshot: quickSnapshot(candidate), elapsedMs: Date.now() - started });
     }
 
-    const report = await deepResearchStock(candidate);
+    // Hard route-level guard: never let deep research consume Vercel's full function window.
+    // Even if an upstream web-search request ignores/defers abort, the API returns a
+    // conservative partial report to the browser after ~65 seconds.
+    const HARD_ROUTE_BUDGET_MS = 65_000;
+    const report = await Promise.race<SingleStockReport>([
+      deepResearchStock(candidate),
+      new Promise<SingleStockReport>((resolve) =>
+        setTimeout(() =>
+          resolve(fallbackReport(candidate,
+            "The 60-second research budget was reached. A partial report was returned instead of waiting for the upstream research request."
+          )), HARD_ROUTE_BUDGET_MS)
+      )
+    ]);
+
+    // Cache completed and partial reports briefly so repeated clicks do not immediately
+    // start another expensive research request.
     deepCache.set(ticker, { expires: Date.now() + CACHE_MS, report });
     return NextResponse.json({ report, cached: false, elapsedMs: Date.now() - started });
   } catch (error) {

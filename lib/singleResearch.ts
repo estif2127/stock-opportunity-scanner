@@ -7,7 +7,7 @@ const RESEARCH_BUDGET_MS = 55_000;
 function client() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-  return new OpenAI({ apiKey });
+  return new OpenAI({ apiKey, timeout: 45_000, maxRetries: 0 });
 }
 
 function cleanJson(text: string) {
@@ -46,7 +46,7 @@ function category(domain: string): ResearchSource["category"] {
   return "Other";
 }
 
-function fallbackReport(candidate: Candidate, reason: string): SingleStockReport {
+export function fallbackReport(candidate: Candidate, reason: string): SingleStockReport {
   return {
     ticker: candidate.ticker,
     companyName: candidate.ticker,
