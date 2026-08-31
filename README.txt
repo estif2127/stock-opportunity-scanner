@@ -1,14 +1,6 @@
-v0.7.5 — Fast market scan + lazy shares/float enrichment
+v0.7.6 — Average Volume
 
-What changed
-- SEC outstanding shares and ORTEX free-float calls no longer block /api/scan.
-- Core scan results render first.
-- The browser then calls /api/enrichment for only the finalists (max 7).
-- SEC and ORTEX enrichment run in parallel with ~4.5 second fallbacks.
-- If enrichment fails or is slow, scan results still remain usable; shares/float fields stay as —.
+Adds Average Volume to market screener candidates without any extra Tiingo requests.
+It reuses the same 5-minute intraday history already fetched for RVOL, sums each prior completed session, and averages the available recent sessions (up to 20). The current session is excluded.
 
-Install
-1. Copy app/ and lib/ into the existing project and replace matching files.
-2. git add .
-3. git commit -m "Make shares and float enrichment non-blocking"
-4. git push
+Copy app and lib into your existing project and replace files.

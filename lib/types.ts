@@ -73,6 +73,7 @@ export type Candidate = {
   currentPrice: number;
   changePct: number;
   volume: number;
+  averageVolume: number | null;
   high: number;
   low: number;
   prevClose: number;

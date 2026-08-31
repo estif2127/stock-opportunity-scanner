@@ -79,6 +79,28 @@ export function calcComparableRvol(bars: Bar[]): { value: number | null; verifie
   return { value: avg > 0 ? currentVol / avg : null, verified: avg > 0 };
 }
 
+function calcAverageDailyVolume(bars: Bar[]): number | null {
+  if (!bars.length) return null;
+
+  // Reuse the intraday history we already fetched for RVOL so this adds
+  // zero extra Tiingo requests. Sum each completed session's 5-minute bars,
+  // exclude the newest session (usually today), then average prior sessions.
+  const byDay = new Map<string, number>();
+  for (const bar of bars) {
+    const day = bar.date.slice(0, 10);
+    byDay.set(day, (byDay.get(day) || 0) + (Number.isFinite(bar.volume) ? bar.volume : 0));
+  }
+
+  const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
+  if (days.length < 2) return null;
+  const completed = days.slice(0, -1).map(([, volume]) => volume).filter((v) => v > 0);
+  if (!completed.length) return null;
+
+  // Use up to the most recent 20 completed sessions available in the fetched window.
+  const sample = completed.slice(-20);
+  return sample.reduce((sum, volume) => sum + volume, 0) / sample.length;
+}
+
 export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
   const price = s.tngoLast!;
   const high = s.high!;
@@ -88,6 +110,7 @@ export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
   const vwap = calcVwap(bars);
   const rvol = calcComparableRvol(bars);
   const volumeAcceleration = calcVolumeAcceleration(bars);
+  const averageVolume = calcAverageDailyVolume(bars);
   const higherLows = calcHigherLows(bars);
   const spreadPct = n(s.lqSpread)
     ? s.lqSpread * 100
@@ -145,6 +168,7 @@ export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
     currentPrice: price,
     changePct,
     volume: s.volume!,
+    averageVolume,
     high,
     low: s.low!,
     prevClose,
