@@ -132,7 +132,7 @@ export default function Home() {
           {researchLoading && <LoadingPanel text="Loading Tiingo market data, intraday structure and recent headlines. No AI research yet."/>}
           {researchError && <ErrorPanel text={researchError}/>} 
           {quick && !report && <QuickResearchView snapshot={quick} deepLoading={deepLoading} onDeep={runDeepResearch}/>}
-          {deepLoading && <LoadingPanel text="Running the 60-second research pass: catalyst, latest filings, fundamentals, capital structure and primary-source verification."/>}
+          {deepLoading && <LoadingPanel text="Deep research is checking SEC filings, fundamentals, catalysts, dilution risk and primary sources. This is the slower step."/>}
           {report && <ResearchView report={report}/>} 
           {!quick && !report && !researchLoading && !researchError && <EmptyResearch/>}
         </>
@@ -175,7 +175,7 @@ function CandidateCard({ c, rank, open, toggle }: { c: Candidate; rank: number; 
       <div className="candidateIdentity"><strong>{c.ticker}</strong><span>{money(c.currentPrice)} · <em>{c.changePct >= 0 ? "+" : ""}{pct(c.changePct)}</em></span></div>
       <span className={`statusPill ${verdictClass(c.ai?.rating)}`}>{c.ai?.rating || "Watch"}</span>
     </div>
-    <div className="metricGrid compactMetrics"><Metric label="Technical" value={`${c.technicalScore}/100`}/><Metric label="Catalyst" value={c.research ? `${c.research.significanceScore}/100` : "Verify"}/><Metric label="RVOL" value={c.rvolVerified && c.rvol ? `${c.rvol.toFixed(1)}x` : "Verify"}/><Metric label="From HOD" value={`-${pct(c.distanceFromHodPct)}`}/><Metric label="VWAP" value={c.aboveVwap == null ? "—" : c.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(c.volume)}/></div>
+    <div className="metricGrid compactMetrics"><Metric label="Price" value={money(c.currentPrice)}/><Metric label="HOD" value={money(c.high)}/><Metric label="From HOD" value={`-${pct(c.distanceFromHodPct)}`}/><Metric label="LOD" value={money(c.low)}/><Metric label="Technical" value={`${c.technicalScore}/100`}/><Metric label="Catalyst" value={c.research ? `${c.research.significanceScore}/100` : "Verify"}/><Metric label="RVOL" value={c.rvolVerified && c.rvol ? `${c.rvol.toFixed(1)}x` : "Verify"}/><Metric label="VWAP" value={c.aboveVwap == null ? "—" : c.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(c.volume)}/><Metric label="Shares Out." value={compact(c.outstandingShares)}/><Metric label="Free Float" value={compact(c.freeFloatShares)}/><Metric label="Float %" value={c.freeFloatPercent == null ? "—" : pct(c.freeFloatPercent)}/><Metric label="Float Mkt Cap" value={c.floatMarketCap == null ? "—" : `$${compact(c.floatMarketCap)}`}/></div>
     <div className="candidateBody">
       <div className="summaryBlock"><p className="kicker">ASSESSMENT</p><p>{c.ai?.summary || c.research?.summary || c.technicalReasons.join(" · ") || "Needs confirmation."}</p></div>
       <div className="detailColumns">
@@ -213,7 +213,7 @@ function QuickResearchView({ snapshot, deepLoading, onDeep }: { snapshot: QuickS
       <ReportCard title="Recent headlines">{snapshot.news.length ? <ul className="headlineList">{snapshot.news.slice(0,5).map((n,i)=><li key={i}>{n.url ? <a href={n.url} target="_blank" rel="noreferrer">{n.title}</a> : n.title}<span>{n.source || "News"}{n.publishedDate ? ` · ${new Date(n.publishedDate).toLocaleString()}` : ""}</span></li>)}</ul> : <p className="muted">No recent Tiingo headlines returned.</p>}</ReportCard>
     </section>
 
-    <section className="deepResearchCallout"><div><p className="kicker">OPTIONAL</p><h2>Need the full thesis?</h2><p>60-Second Deep Research checks the highest-value SEC, earnings, catalyst, capital-structure and biotech facts without trying to read everything ever published about the company.</p></div><button className="primaryButton" onClick={onDeep} disabled={deepLoading}>{deepLoading ? "Researching…" : "Run 60-second research"}</button></section>
+    <section className="deepResearchCallout"><div><p className="kicker">OPTIONAL</p><h2>Need the full thesis?</h2><p>Deep Research checks SEC filings, earnings, fundamentals, catalyst verification, dilution/capital structure and biotech sources when relevant.</p></div><button className="primaryButton" onClick={onDeep} disabled={deepLoading}>{deepLoading ? "Researching…" : "Run deep research"}</button></section>
   </div>;
 }
 

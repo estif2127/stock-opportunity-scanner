@@ -79,6 +79,12 @@ export type Candidate = {
   distanceFromHodPct: number;
   spreadPct: number | null;
   dollarVolume: number;
+  outstandingShares?: number | null;
+  outstandingSharesAsOf?: string | null;
+  freeFloatShares?: number | null;
+  freeFloatPercent?: number | null;
+  freeFloatAsOf?: string | null;
+  floatMarketCap?: number | null;
   vwap: number | null;
   rvol: number | null;
   rvolVerified: boolean;

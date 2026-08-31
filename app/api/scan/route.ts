@@ -3,6 +3,8 @@ import { analyzeCandidates } from "@/lib/ai";
 import { verifyCatalysts } from "@/lib/research";
 import { getAllSnapshots, getBars, getNews } from "@/lib/tiingo";
 import { buildCandidate, discoveryFilter, rankDiscovery } from "@/lib/technicals";
+import { getOutstandingSharesBatch } from "@/lib/secShares";
+import { getFreeFloatBatch } from "@/lib/freeFloat";
 import type { Candidate } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -37,10 +39,21 @@ export async function POST() {
       .sort((a, b) => b.technicalScore - a.technicalScore)
       .slice(0, 7);
 
-    const news = await getNews(candidates.map((c) => c.ticker));
+    const tickers = candidates.map((c) => c.ticker);
+    const [news, outstandingShares, freeFloat] = await Promise.all([
+      getNews(tickers),
+      getOutstandingSharesBatch(tickers),
+      getFreeFloatBatch(tickers)
+    ]);
     candidates = candidates.map((c) => ({
       ...c,
-      news: news.filter((n) => n.tickers?.some((t) => t.toUpperCase() === c.ticker.toUpperCase())).slice(0, 6)
+      news: news.filter((n) => n.tickers?.some((t) => t.toUpperCase() === c.ticker.toUpperCase())).slice(0, 6),
+      outstandingShares: outstandingShares[c.ticker]?.shares ?? null,
+      outstandingSharesAsOf: outstandingShares[c.ticker]?.asOf ?? null,
+      freeFloatShares: freeFloat[c.ticker]?.shares ?? null,
+      freeFloatPercent: freeFloat[c.ticker]?.percent ?? null,
+      freeFloatAsOf: freeFloat[c.ticker]?.asOf ?? null,
+      floatMarketCap: freeFloat[c.ticker]?.shares != null ? freeFloat[c.ticker].shares! * c.currentPrice : null
     }));
 
     // v0.2: one primary-source web-research pass across the top finalists.
@@ -62,7 +75,7 @@ export async function POST() {
       dataLabel: "Tiingo consolidated derived realtime + consolidated intraday bars",
       researchLabel: "OpenAI primary-source web verification (SEC / company IR / FDA / ClinicalTrials.gov)",
       limitations: [
-        "Market-cap, float and short interest are not yet verified in this version.",
+        "Shares outstanding are sourced from SEC XBRL. Free float is sourced from ORTEX when available; float market cap is calculated as current price × free-float shares. Float data can lag ownership filings and may be unavailable on the trial feed.",
         "Primary-source catalyst research is limited to the strongest finalists to control cost and latency.",
         "Tiingo Starter data is licensed for personal/internal use; do not redistribute it publicly.",
         "A Strong rating is research output, not an instruction to trade. Confirm prices and filings yourself before acting."
