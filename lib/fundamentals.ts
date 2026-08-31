@@ -1,204 +1,186 @@
 import "server-only";
 import type { StructuredFundamentals } from "./types";
 
-const BASE = "https://api.tiingo.com";
+const SEC_BASE = "https://data.sec.gov";
+const SEC_TICKERS = "https://www.sec.gov/files/company_tickers.json";
 
-function token() {
-  const value = process.env.TIINGO_API_KEY;
-  if (!value) throw new Error("Missing TIINGO_API_KEY");
-  return value;
-}
+const SEC_HEADERS = {
+  "User-Agent": process.env.SEC_USER_AGENT || "StockOpportunityScanner/1.0 research@example.com",
+  "Accept-Encoding": "gzip, deflate",
+  Accept: "application/json"
+};
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { Authorization: `Token ${token()}`, "Content-Type": "application/json" },
+type TickerRow = { cik_str: number; ticker: string; title: string };
+type UnitRow = {
+  start?: string;
+  end: string;
+  val: number;
+  accn?: string;
+  fy?: number;
+  fp?: string;
+  form?: string;
+  filed?: string;
+  frame?: string;
+};
+type Fact = { label?: string; description?: string; units?: Record<string, UnitRow[]> };
+type CompanyFacts = {
+  entityName?: string;
+  facts?: Record<string, Record<string, Fact>>;
+};
+
+let tickerCache: { expires: number; rows: TickerRow[] } | null = null;
+const factsCache = new Map<string, { expires: number; value: CompanyFacts }>();
+const CACHE_MS = 6 * 60 * 60 * 1000;
+
+async function secJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, {
+    headers: SEC_HEADERS,
     cache: "no-store",
     signal: AbortSignal.timeout(8_000)
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Tiingo fundamentals ${res.status}: ${text.slice(0, 240)}`);
-  }
+  if (!res.ok) throw new Error(`SEC ${res.status}: ${(await res.text()).slice(0, 220)}`);
   return res.json() as Promise<T>;
 }
 
-type Definition = { dataCode: string; name: string; statementType?: string; units?: string };
-type DataPoint = { dataCode: string; value: number | null };
-type Statement = {
-  date: string;
-  quarter: number;
-  year: number;
-  statementData?: {
-    balanceSheet?: DataPoint[];
-    incomeStatement?: DataPoint[];
-    cashFlow?: DataPoint[];
-    overview?: DataPoint[];
-  };
-};
-
-type FundamentalMeta = {
-  ticker?: string;
-  name?: string;
-  sector?: string;
-  industry?: string;
-  reportingCurrency?: string;
-};
-
-type DailyFundamental = {
-  date: string;
-  marketCap?: number | null;
-  enterpriseVal?: number | null;
-  peRatio?: number | null;
-  pbRatio?: number | null;
-  trailingPEG1Y?: number | null;
-  [key: string]: unknown;
-};
-function norm(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+async function resolveTicker(ticker: string) {
+  if (!tickerCache || tickerCache.expires < Date.now()) {
+    const raw = await secJson<Record<string, TickerRow>>(SEC_TICKERS);
+    tickerCache = { expires: Date.now() + CACHE_MS, rows: Object.values(raw) };
+  }
+  const row = tickerCache.rows.find((r) => r.ticker.toUpperCase() === ticker.toUpperCase());
+  if (!row) throw new Error(`SEC CIK not found for ${ticker}`);
+  return { ...row, cik: String(row.cik_str).padStart(10, "0") };
 }
 
-function buildCodeLookup(defs: Definition[]) {
-  const entries = defs.map((d) => ({ code: d.dataCode, name: norm(d.name || d.dataCode), codeNorm: norm(d.dataCode) }));
-  const find = (...names: string[]) => {
-    for (const wanted of names.map(norm)) {
-      const exact = entries.find((e) => e.name === wanted || e.codeNorm === wanted);
-      if (exact) return exact.code;
-    }
-    for (const wanted of names.map(norm)) {
-      const fuzzy = entries.find((e) => e.name.includes(wanted) || wanted.includes(e.name) || e.codeNorm.includes(wanted) || wanted.includes(e.codeNorm));
-      if (fuzzy) return fuzzy.code;
-    }
-    return undefined;
-  };
-  return { find };
+async function companyFacts(cik: string) {
+  const cached = factsCache.get(cik);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const value = await secJson<CompanyFacts>(`${SEC_BASE}/api/xbrl/companyfacts/CIK${cik}.json`);
+  factsCache.set(cik, { expires: Date.now() + CACHE_MS, value });
+  return value;
 }
 
-function points(stmt: Statement | undefined) {
-  const all = [
-    ...(stmt?.statementData?.incomeStatement || []),
-    ...(stmt?.statementData?.balanceSheet || []),
-    ...(stmt?.statementData?.cashFlow || []),
-    ...(stmt?.statementData?.overview || [])
-  ];
-  return new Map(all.map((p) => [p.dataCode, Number.isFinite(Number(p.value)) ? Number(p.value) : null]));
+function allUnits(fact?: Fact): UnitRow[] {
+  if (!fact?.units) return [];
+  return Object.values(fact.units).flat();
 }
 
-function get(map: Map<string, number | null>, code?: string) {
-  return code ? (map.get(code) ?? null) : null;
+function factByTags(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap") {
+  const group = cf.facts?.[taxonomy] || {};
+  for (const tag of tags) if (group[tag]) return group[tag];
+  return undefined;
 }
 
-function pct(num: number | null, den: number | null) {
-  if (num == null || den == null || den === 0) return null;
-  return (num / den) * 100;
+function daySpan(r: UnitRow) {
+  if (!r.start) return null;
+  return Math.round((new Date(r.end).getTime() - new Date(r.start).getTime()) / 86_400_000);
 }
 
-function growth(cur: number | null, old: number | null) {
-  if (cur == null || old == null || old === 0) return null;
-  return ((cur - old) / Math.abs(old)) * 100;
+function latestDuration(cf: CompanyFacts, tags: string[]) {
+  const rows = allUnits(factByTags(cf, tags))
+    .filter((r) => ["10-Q", "10-K"].includes(r.form || "") && r.start && Number.isFinite(Number(r.val)))
+    .sort((a, b) => new Date(b.filed || b.end).getTime() - new Date(a.filed || a.end).getTime());
+
+  // Prefer a true quarter (~3 months), then annual period. This avoids using 6/9-month YTD values as a quarter.
+  return rows.find((r) => { const d = daySpan(r); return d != null && d >= 70 && d <= 120; })
+    || rows.find((r) => { const d = daySpan(r); return d != null && d >= 300 && d <= 390; })
+    || rows[0];
 }
 
-function latestQuarter(statements: Statement[]) {
-  return [...statements]
-    .filter((s) => Number(s.quarter) >= 1 && Number(s.quarter) <= 4)
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-}
-
-function comparable(statements: Statement[], latest?: Statement) {
+function priorComparable(cf: CompanyFacts, tags: string[], latest?: UnitRow) {
   if (!latest) return undefined;
-  return statements.find((s) => Number(s.quarter) === Number(latest.quarter) && Number(s.year) === Number(latest.year) - 1);
+  const span = daySpan(latest);
+  return allUnits(factByTags(cf, tags))
+    .filter((r) => r !== latest && ["10-Q", "10-K"].includes(r.form || "") && r.start && Number.isFinite(Number(r.val)))
+    .filter((r) => {
+      const d = daySpan(r);
+      return d != null && span != null && Math.abs(d - span) <= 15 && new Date(r.end) < new Date(latest.end);
+    })
+    .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime())[0];
 }
 
-function latestDaily(rows: DailyFundamental[]) {
-  return [...rows].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+function latestInstant(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap") {
+  return allUnits(factByTags(cf, tags, taxonomy))
+    .filter((r) => ["10-Q", "10-K"].includes(r.form || "") && Number.isFinite(Number(r.val)))
+    .sort((a, b) => new Date(b.filed || b.end).getTime() - new Date(a.filed || a.end).getTime())[0];
+}
+
+function value(r?: UnitRow) { return r && Number.isFinite(Number(r.val)) ? Number(r.val) : null; }
+function growth(cur: number | null, prev: number | null) {
+  if (cur == null || prev == null || prev === 0) return null;
+  return ((cur - prev) / Math.abs(prev)) * 100;
+}
+function pct(a: number | null, b: number | null) {
+  if (a == null || b == null || b === 0) return null;
+  return (a / b) * 100;
 }
 
 export async function getStructuredFundamentals(ticker: string): Promise<StructuredFundamentals> {
   try {
-    const encoded = encodeURIComponent(ticker.toUpperCase());
-    const nowDate = new Date();
-    const statementStart = new Date(nowDate.getTime() - 850 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const dailyStart = new Date(nowDate.getTime() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const [defs, statements, daily, metaRows] = await Promise.all([
-      fetchJson<Definition[]>("/tiingo/fundamentals/definitions"),
-      fetchJson<Statement[]>(`/tiingo/fundamentals/${encoded}/statements?startDate=${statementStart}`),
-      fetchJson<DailyFundamental[]>(`/tiingo/fundamentals/${encoded}/daily?startDate=${dailyStart}`),
-      fetchJson<FundamentalMeta[]>(`/tiingo/fundamentals/meta?ticker=${encoded}`).catch(() => [])
-    ]);
+    const company = await resolveTicker(ticker);
+    const cf = await companyFacts(company.cik);
 
-    const meta = (metaRows || []).find((m) => String(m.ticker || "").toUpperCase() === ticker.toUpperCase()) || (metaRows || [])[0];
-    const latest = latestQuarter(statements || []);
-    if (!latest) return { available: false, source: "Tiingo Fundamentals", error: "No quarterly statement returned." };
-    const prior = comparable(statements || [], latest);
-    const now = points(latest);
-    const prev = points(prior);
-    const codes = buildCodeLookup(defs || []);
+    const revenueTags = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"];
+    const revenueRow = latestDuration(cf, revenueTags);
+    const priorRevenueRow = priorComparable(cf, revenueTags, revenueRow);
+    const netIncomeRow = latestDuration(cf, ["NetIncomeLoss", "ProfitLoss"]);
+    const epsRow = latestDuration(cf, ["EarningsPerShareDiluted"]);
+    const grossProfitRow = latestDuration(cf, ["GrossProfit"]);
+    const operatingIncomeRow = latestDuration(cf, ["OperatingIncomeLoss"]);
+    const ocfRow = latestDuration(cf, ["NetCashProvidedByUsedInOperatingActivities"]);
+    const capexRow = latestDuration(cf, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsForPropertyPlantAndEquipment"]);
 
-    const revenueCode = codes.find("Revenue");
-    const netIncomeCode = codes.find("Net Income", "Net Income Common Stock");
-    const epsDilutedCode = codes.find("Earnings Per Share Diluted", "Diluted EPS");
-    const grossProfitCode = codes.find("Gross Profit");
-    const operatingIncomeCode = codes.find("Operating Income");
-    const fcfCode = codes.find("Free Cash Flow");
-    const ocfCode = codes.find("Net Cash Flow From Operations", "Operating Cash Flow");
-    const capexCode = codes.find("Capital Expenditure Capex", "Capital Expenditure");
-    const cashCode = codes.find("Cash Cash Equivalents", "Cash & Cash Equivalents", "Cash and Cash Equivalents");
-    const stiCode = codes.find("Short term Investments", "Short-Term Investments");
-    const stdCode = codes.find("Short term Debt", "Short-Term Debt");
-    const ltdCode = codes.find("Long term Debt", "Long-Term Debt");
-    const sharesCode = codes.find("Weighted Average Shares Diluted", "Weighted Average Shares (Diluted)");
+    const revenue = value(revenueRow);
+    const grossProfit = value(grossProfitRow);
+    const operatingIncome = value(operatingIncomeRow);
+    const operatingCashFlow = value(ocfRow);
+    const capex = value(capexRow);
+    const freeCashFlow = operatingCashFlow != null && capex != null ? operatingCashFlow - Math.abs(capex) : null;
 
-    const revenue = get(now, revenueCode);
-    const priorRevenue = get(prev, revenueCode);
-    const grossProfit = get(now, grossProfitCode);
-    const operatingIncome = get(now, operatingIncomeCode);
-    const ocf = get(now, ocfCode);
-    const capexRaw = get(now, capexCode);
-    let fcf = get(now, fcfCode);
-    if (fcf == null && ocf != null && capexRaw != null) fcf = ocf + capexRaw; // capex is commonly reported negative
-
-    const cash = get(now, cashCode);
-    const shortTermInvestments = get(now, stiCode);
-    const shortTermDebt = get(now, stdCode);
-    const longTermDebt = get(now, ltdCode);
+    const cash = value(latestInstant(cf, ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"]));
+    const shortTermInvestments = value(latestInstant(cf, ["ShortTermInvestments", "MarketableSecuritiesCurrent"]));
+    const shortTermDebt = value(latestInstant(cf, ["ShortTermBorrowings", "LongTermDebtCurrent", "ShortTermDebtCurrent"]));
+    const longTermDebt = value(latestInstant(cf, ["LongTermDebtNoncurrent", "LongTermDebt"]));
     const totalDebt = shortTermDebt == null && longTermDebt == null ? null : (shortTermDebt || 0) + (longTermDebt || 0);
-    const dailyNow = latestDaily(daily || []);
+    const shares = value(latestInstant(cf, ["EntityCommonStockSharesOutstanding"], "dei"));
+
+    const period = revenueRow?.end ? `${revenueRow.form || "SEC filing"} period ended ${revenueRow.end}` : undefined;
+
     return {
-      available: true,
-      source: "Tiingo Fundamentals",
-      companyName: meta?.name,
-      sector: meta?.sector,
-      industry: meta?.industry,
-      reportingCurrency: meta?.reportingCurrency || "USD",
-      period: `FY${latest.year} Q${latest.quarter}`,
-      priorComparablePeriod: prior ? `FY${prior.year} Q${prior.quarter}` : undefined,
+      available: Boolean(revenueRow || netIncomeRow || cash != null),
+      source: "SEC Companyfacts (XBRL)",
+      companyName: cf.entityName || company.title,
+      reportingCurrency: "USD",
+      period,
+      priorComparablePeriod: priorRevenueRow?.end,
       revenue,
-      revenueGrowthYoY: growth(revenue, priorRevenue),
-      netIncome: get(now, netIncomeCode),
-      epsDiluted: get(now, epsDilutedCode),
+      revenueGrowthYoY: growth(revenue, value(priorRevenueRow)),
+      netIncome: value(netIncomeRow),
+      epsDiluted: value(epsRow),
       grossProfit,
       grossMarginPct: pct(grossProfit, revenue),
       operatingIncome,
       operatingMarginPct: pct(operatingIncome, revenue),
-      freeCashFlow: fcf,
-      operatingCashFlow: ocf,
-      capex: capexRaw,
+      freeCashFlow,
+      operatingCashFlow,
+      capex,
       cash,
       shortTermInvestments,
       shortTermDebt,
       longTermDebt,
       totalDebt,
-      marketCap: Number.isFinite(Number(dailyNow?.marketCap)) ? Number(dailyNow?.marketCap) : null,
-      enterpriseValue: Number.isFinite(Number(dailyNow?.enterpriseVal)) ? Number(dailyNow?.enterpriseVal) : null,
-      peRatio: Number.isFinite(Number(dailyNow?.peRatio)) ? Number(dailyNow?.peRatio) : null,
-      pbRatio: Number.isFinite(Number(dailyNow?.pbRatio)) ? Number(dailyNow?.pbRatio) : null,
-      trailingPEG1Y: Number.isFinite(Number(dailyNow?.trailingPEG1Y)) ? Number(dailyNow?.trailingPEG1Y) : null,
-      sharesDiluted: get(now, sharesCode)
+      marketCap: null,
+      enterpriseValue: null,
+      peRatio: null,
+      pbRatio: null,
+      trailingPEG1Y: null,
+      sharesDiluted: shares
     };
   } catch (error) {
     return {
       available: false,
-      source: "Tiingo Fundamentals",
-      error: error instanceof Error ? error.message : "Structured fundamentals unavailable"
+      source: "SEC Companyfacts (XBRL)",
+      error: error instanceof Error ? error.message : "SEC structured fundamentals unavailable"
     };
   }
 }

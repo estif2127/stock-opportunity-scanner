@@ -1,6 +1,12 @@
-v0.7.6 — Average Volume
+v0.8 — SEC-first structured fundamentals
 
-Adds Average Volume to market screener candidates without any extra Tiingo requests.
-It reuses the same 5-minute intraday history already fetched for RVOL, sums each prior completed session, and averages the available recent sessions (up to 20). The current session is excluded.
+Fixes blank fundamentals caused by Tiingo hourly-rate limits.
 
-Copy app and lib into your existing project and replace files.
+Changes:
+- Basic fundamentals now come from SEC Companyfacts/XBRL first, with no Tiingo request required.
+- Pulls latest reported revenue, YoY comparable revenue growth, net income, diluted EPS, gross margin, operating margin, operating cash flow, estimated free cash flow, cash, investments, debt, and shares outstanding when filed.
+- Uses short in-memory caching to avoid repeatedly hitting SEC endpoints.
+- Tiingo remains the source for price/intraday data.
+- Valuation ratios may remain unavailable until a separate valuation source is added; the app will not invent them.
+
+Copy lib/fundamentals.ts into your existing project and replace the file.
