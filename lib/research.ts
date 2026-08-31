@@ -48,6 +48,7 @@ function safeUrl(value: unknown): string | null {
 export async function verifyCatalysts(candidates: Candidate[]): Promise<Candidate[]> {
   const ai = client();
   if (!ai || !candidates.length) return candidates;
+  const openai = ai;
 
   // Keep catalyst verification useful without creating a large TPM burst.
   // Research only the two strongest finalists and do them SEQUENTIALLY.
@@ -116,7 +117,7 @@ Return JSON only:
     let lastError: any = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await ai.responses.create({
+        const response = await openai.responses.create({
           model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
           tools: [{ type: "web_search", search_context_size: "low" }],
           input: prompt,
