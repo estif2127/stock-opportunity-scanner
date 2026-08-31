@@ -3,8 +3,6 @@ import { analyzeCandidates } from "@/lib/ai";
 import { verifyCatalysts } from "@/lib/research";
 import { getAllSnapshots, getBars, getNews } from "@/lib/tiingo";
 import { buildCandidate, discoveryFilter, rankDiscovery } from "@/lib/technicals";
-import { getOutstandingSharesBatch } from "@/lib/secShares";
-import { getFreeFloatBatch } from "@/lib/freeFloat";
 import type { Candidate } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -40,20 +38,18 @@ export async function POST() {
       .slice(0, 7);
 
     const tickers = candidates.map((c) => c.ticker);
-    const [news, outstandingShares, freeFloat] = await Promise.all([
-      getNews(tickers),
-      getOutstandingSharesBatch(tickers),
-      getFreeFloatBatch(tickers)
-    ]);
+    const news = await getNews(tickers);
     candidates = candidates.map((c) => ({
       ...c,
       news: news.filter((n) => n.tickers?.some((t) => t.toUpperCase() === c.ticker.toUpperCase())).slice(0, 6),
-      outstandingShares: outstandingShares[c.ticker]?.shares ?? null,
-      outstandingSharesAsOf: outstandingShares[c.ticker]?.asOf ?? null,
-      freeFloatShares: freeFloat[c.ticker]?.shares ?? null,
-      freeFloatPercent: freeFloat[c.ticker]?.percent ?? null,
-      freeFloatAsOf: freeFloat[c.ticker]?.asOf ?? null,
-      floatMarketCap: freeFloat[c.ticker]?.shares != null ? freeFloat[c.ticker].shares! * c.currentPrice : null
+      // Shares/float enrichment now loads after the core scan returns, so these
+      // slow external calls never block market-scan results.
+      outstandingShares: null,
+      outstandingSharesAsOf: null,
+      freeFloatShares: null,
+      freeFloatPercent: null,
+      freeFloatAsOf: null,
+      floatMarketCap: null
     }));
 
     // v0.2: one primary-source web-research pass across the top finalists.

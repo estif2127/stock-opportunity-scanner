@@ -51,6 +51,25 @@ export default function Home() {
       const data = safeParse(await res.text(), res.status);
       if (!res.ok) throw new Error(data.error || `Scan failed (HTTP ${res.status})`);
       setScanResult(data);
+
+      // Load SEC shares + free-float after core scan results are already visible.
+      // This enrichment is intentionally non-blocking.
+      void fetch("/api/enrichment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: (data.candidates || []).map((c: Candidate) => ({ ticker: c.ticker, currentPrice: c.currentPrice }))
+        })
+      })
+        .then(async (r) => safeParse(await r.text(), r.status))
+        .then((extra) => {
+          const enrichment = extra?.enrichment || {};
+          setScanResult((current) => current ? {
+            ...current,
+            candidates: current.candidates.map((c) => ({ ...c, ...(enrichment[c.ticker] || {}) }))
+          } : current);
+        })
+        .catch(() => { /* enrichment is optional; keep core scan visible */ });
     } catch (e) { setScanError(e instanceof Error ? e.message : "Scan failed"); }
     finally { setScanLoading(false); }
   }

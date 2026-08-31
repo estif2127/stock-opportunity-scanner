@@ -1,23 +1,14 @@
-v0.7.4 — Free float + float market cap
+v0.7.5 — Fast market scan + lazy shares/float enrichment
 
-Adds to Market Scanner candidate cards:
-- Free Float shares
-- Free Float % of shares outstanding
-- Float Market Cap = current price × free-float shares
+What changed
+- SEC outstanding shares and ORTEX free-float calls no longer block /api/scan.
+- Core scan results render first.
+- The browser then calls /api/enrichment for only the finalists (max 7).
+- SEC and ORTEX enrichment run in parallel with ~4.5 second fallbacks.
+- If enrichment fails or is slow, scan results still remain usable; shares/float fields stay as —.
 
-Data source:
-- Shares Outstanding: SEC XBRL (existing)
-- Free Float: ORTEX Free Float API
-
-The code uses ORTEX's documented TEST trial key automatically if ORTEX_API_KEY is not set.
-The trial feed may not return every ticker/date. In that case the UI shows — rather than estimating or inventing a float.
-
-Optional later:
-Add ORTEX_API_KEY to Vercel Environment Variables for broader/current ORTEX access.
-
-Install:
-Copy app and lib into your existing project and replace matching files.
-Then:
-  git add .
-  git commit -m "Add free float and float market cap"
-  git push
+Install
+1. Copy app/ and lib/ into the existing project and replace matching files.
+2. git add .
+3. git commit -m "Make shares and float enrichment non-blocking"
+4. git push
