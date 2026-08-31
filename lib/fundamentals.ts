@@ -65,10 +65,13 @@ function allUnits(fact?: Fact): UnitRow[] {
   return Object.values(fact.units).flat();
 }
 
-function factByTags(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap") {
+function factsByTags(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap") {
   const group = cf.facts?.[taxonomy] || {};
-  for (const tag of tags) if (group[tag]) return group[tag];
-  return undefined;
+  return tags.map((tag) => group[tag]).filter(Boolean) as Fact[];
+}
+
+function rowsByTags(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap") {
+  return factsByTags(cf, tags, taxonomy).flatMap(allUnits);
 }
 
 function daySpan(r: UnitRow) {
@@ -76,33 +79,79 @@ function daySpan(r: UnitRow) {
   return Math.round((new Date(r.end).getTime() - new Date(r.start).getTime()) / 86_400_000);
 }
 
-function latestDuration(cf: CompanyFacts, tags: string[]) {
-  const rows = allUnits(factByTags(cf, tags))
-    .filter((r) => ["10-Q", "10-K"].includes(r.form || "") && r.start && Number.isFinite(Number(r.val)))
-    .sort((a, b) => new Date(b.filed || b.end).getTime() - new Date(a.filed || a.end).getTime());
+function filingTime(r: UnitRow) {
+  return new Date(r.filed || r.end).getTime();
+}
 
-  // Prefer a true quarter (~3 months), then annual period. This avoids using 6/9-month YTD values as a quarter.
-  return rows.find((r) => { const d = daySpan(r); return d != null && d >= 70 && d <= 120; })
-    || rows.find((r) => { const d = daySpan(r); return d != null && d >= 300 && d <= 390; })
-    || rows[0];
+function validDurationRows(cf: CompanyFacts, tags: string[]) {
+  return rowsByTags(cf, tags)
+    .filter((r) => ["10-Q", "10-K"].includes(r.form || "") && r.start && Number.isFinite(Number(r.val)));
+}
+
+function latestDuration(cf: CompanyFacts, tags: string[]) {
+  const rows = validDurationRows(cf, tags)
+    .sort((a, b) => filingTime(b) - filingTime(a));
+
+  // Prefer the newest true quarter. If the company does not provide a quarter value,
+  // use the newest annual value. Never prefer an older tag merely because it appears
+  // first in the tag list.
+  const quarterRows = rows.filter((r) => {
+    const d = daySpan(r);
+    return d != null && d >= 70 && d <= 120;
+  });
+  if (quarterRows.length) return quarterRows[0];
+
+  const annualRows = rows.filter((r) => {
+    const d = daySpan(r);
+    return d != null && d >= 300 && d <= 390;
+  });
+  return annualRows[0] || rows[0];
+}
+
+function samePeriodDuration(cf: CompanyFacts, tags: string[], anchor?: UnitRow) {
+  if (!anchor?.start || !anchor.end) return undefined;
+  const anchorSpan = daySpan(anchor);
+  if (anchorSpan == null) return undefined;
+
+  return validDurationRows(cf, tags)
+    .filter((r) => r.end === anchor.end)
+    .filter((r) => {
+      const d = daySpan(r);
+      return d != null && Math.abs(d - anchorSpan) <= 15;
+    })
+    .sort((a, b) => {
+      // Prefer a row filed with the same accession/form as the anchor, then newest filing.
+      const aMatch = Number(Boolean(anchor.accn && a.accn === anchor.accn)) + Number(Boolean(anchor.form && a.form === anchor.form));
+      const bMatch = Number(Boolean(anchor.accn && b.accn === anchor.accn)) + Number(Boolean(anchor.form && b.form === anchor.form));
+      return bMatch - aMatch || filingTime(b) - filingTime(a);
+    })[0];
 }
 
 function priorComparable(cf: CompanyFacts, tags: string[], latest?: UnitRow) {
   if (!latest) return undefined;
   const span = daySpan(latest);
-  return allUnits(factByTags(cf, tags))
-    .filter((r) => r !== latest && ["10-Q", "10-K"].includes(r.form || "") && r.start && Number.isFinite(Number(r.val)))
+  if (span == null) return undefined;
+  const target = new Date(latest.end);
+  target.setUTCFullYear(target.getUTCFullYear() - 1);
+  const targetMs = target.getTime();
+
+  return validDurationRows(cf, tags)
     .filter((r) => {
       const d = daySpan(r);
-      return d != null && span != null && Math.abs(d - span) <= 15 && new Date(r.end) < new Date(latest.end);
+      if (d == null || Math.abs(d - span) > 15) return false;
+      const endMs = new Date(r.end).getTime();
+      return endMs < new Date(latest.end).getTime() && Math.abs(endMs - targetMs) <= 60 * 86_400_000;
     })
-    .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime())[0];
+    .sort((a, b) => Math.abs(new Date(a.end).getTime() - targetMs) - Math.abs(new Date(b.end).getTime() - targetMs))[0];
 }
 
-function latestInstant(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap") {
-  return allUnits(factByTags(cf, tags, taxonomy))
-    .filter((r) => ["10-Q", "10-K"].includes(r.form || "") && Number.isFinite(Number(r.val)))
-    .sort((a, b) => new Date(b.filed || b.end).getTime() - new Date(a.filed || a.end).getTime())[0];
+function latestInstant(cf: CompanyFacts, tags: string[], taxonomy = "us-gaap", anchorEnd?: string) {
+  const rows = rowsByTags(cf, tags, taxonomy)
+    .filter((r) => ["10-Q", "10-K"].includes(r.form || "") && Number.isFinite(Number(r.val)));
+
+  const aligned = anchorEnd ? rows.filter((r) => r.end === anchorEnd) : [];
+  return (aligned.length ? aligned : rows)
+    .sort((a, b) => filingTime(b) - filingTime(a))[0];
 }
 
 function value(r?: UnitRow) { return r && Number.isFinite(Number(r.val)) ? Number(r.val) : null; }
@@ -123,12 +172,16 @@ export async function getStructuredFundamentals(ticker: string): Promise<Structu
     const revenueTags = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"];
     const revenueRow = latestDuration(cf, revenueTags);
     const priorRevenueRow = priorComparable(cf, revenueTags, revenueRow);
-    const netIncomeRow = latestDuration(cf, ["NetIncomeLoss", "ProfitLoss"]);
-    const epsRow = latestDuration(cf, ["EarningsPerShareDiluted"]);
-    const grossProfitRow = latestDuration(cf, ["GrossProfit"]);
-    const operatingIncomeRow = latestDuration(cf, ["OperatingIncomeLoss"]);
-    const ocfRow = latestDuration(cf, ["NetCashProvidedByUsedInOperatingActivities"]);
-    const capexRow = latestDuration(cf, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsForPropertyPlantAndEquipment"]);
+
+    // Anchor every duration metric to the same reporting period as revenue.
+    // This prevents impossible ratios caused by combining, for example, 2018 revenue
+    // with 2026 net income or cash flow.
+    const netIncomeRow = samePeriodDuration(cf, ["NetIncomeLoss", "ProfitLoss"], revenueRow);
+    const epsRow = samePeriodDuration(cf, ["EarningsPerShareDiluted"], revenueRow);
+    const grossProfitRow = samePeriodDuration(cf, ["GrossProfit"], revenueRow);
+    const operatingIncomeRow = samePeriodDuration(cf, ["OperatingIncomeLoss"], revenueRow);
+    const ocfRow = samePeriodDuration(cf, ["NetCashProvidedByUsedInOperatingActivities"], revenueRow);
+    const capexRow = samePeriodDuration(cf, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsForPropertyPlantAndEquipment"], revenueRow);
 
     const revenue = value(revenueRow);
     const grossProfit = value(grossProfitRow);
@@ -137,12 +190,13 @@ export async function getStructuredFundamentals(ticker: string): Promise<Structu
     const capex = value(capexRow);
     const freeCashFlow = operatingCashFlow != null && capex != null ? operatingCashFlow - Math.abs(capex) : null;
 
-    const cash = value(latestInstant(cf, ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"]));
-    const shortTermInvestments = value(latestInstant(cf, ["ShortTermInvestments", "MarketableSecuritiesCurrent"]));
-    const shortTermDebt = value(latestInstant(cf, ["ShortTermBorrowings", "LongTermDebtCurrent", "ShortTermDebtCurrent"]));
-    const longTermDebt = value(latestInstant(cf, ["LongTermDebtNoncurrent", "LongTermDebt"]));
+    const anchorEnd = revenueRow?.end;
+    const cash = value(latestInstant(cf, ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], "us-gaap", anchorEnd));
+    const shortTermInvestments = value(latestInstant(cf, ["ShortTermInvestments", "MarketableSecuritiesCurrent"], "us-gaap", anchorEnd));
+    const shortTermDebt = value(latestInstant(cf, ["ShortTermBorrowings", "LongTermDebtCurrent", "ShortTermDebtCurrent"], "us-gaap", anchorEnd));
+    const longTermDebt = value(latestInstant(cf, ["LongTermDebtNoncurrent", "LongTermDebt"], "us-gaap", anchorEnd));
     const totalDebt = shortTermDebt == null && longTermDebt == null ? null : (shortTermDebt || 0) + (longTermDebt || 0);
-    const shares = value(latestInstant(cf, ["EntityCommonStockSharesOutstanding"], "dei"));
+    const shares = value(latestInstant(cf, ["EntityCommonStockSharesOutstanding"], "dei", anchorEnd));
 
     const period = revenueRow?.end ? `${revenueRow.form || "SEC filing"} period ended ${revenueRow.end}` : undefined;
 
@@ -158,9 +212,9 @@ export async function getStructuredFundamentals(ticker: string): Promise<Structu
       netIncome: value(netIncomeRow),
       epsDiluted: value(epsRow),
       grossProfit,
-      grossMarginPct: pct(grossProfit, revenue),
+      grossMarginPct: (() => { const m = pct(grossProfit, revenue); return m != null && m >= -100 && m <= 100 ? m : null; })(),
       operatingIncome,
-      operatingMarginPct: pct(operatingIncome, revenue),
+      operatingMarginPct: (() => { const m = pct(operatingIncome, revenue); return m != null && m >= -100 && m <= 100 ? m : null; })(),
       freeCashFlow,
       operatingCashFlow,
       capex,
