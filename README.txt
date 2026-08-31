@@ -1,10 +1,27 @@
-v0.8.4 SEC period-alignment fix
+Stock Opportunity Scanner v0.9 — Single-stock market metrics
 
-Fixes:
-- Merges equivalent SEC XBRL tags before choosing the newest fact.
-- Anchors earnings, margins and cash-flow metrics to the same reporting period as revenue.
-- Uses prior-year comparable revenue for YoY growth rather than the immediately prior quarter.
-- Aligns balance-sheet facts to the same filing period when possible.
-- Rejects impossible margin values instead of displaying nonsense.
+Adds the Market Scanner metric set to Single Stock Research:
+- Price
+- HOD / LOD
+- % from HOD
+- Technical score
+- RVOL
+- VWAP status
+- Current volume
+- Average volume
+- Dollar volume
+- Spread
+- Shares outstanding
+- Free float
+- Float %
+- Float market cap
 
-Replace only lib/fundamentals.ts in your existing project, then commit and push.
+Shares/float enrichment is loaded after the quick snapshot so it does not block the main single-stock result.
+
+Install:
+1. Copy the app and lib folders into your existing stock-opportunity-scanner folder.
+2. Choose Replace files when Windows asks.
+3. Run:
+   git add .
+   git commit -m "Add market scan metrics to single stock research"
+   git push

@@ -88,6 +88,20 @@ export default function Home() {
       const data = safeParse(await res.text(), res.status);
       if (!res.ok) throw new Error(data.error || `Snapshot failed (HTTP ${res.status})`);
       setQuick(data.snapshot);
+
+      // Match the market scanner: show the core snapshot first, then enrich shares/float
+      // in the background so these slower lookups never block the single-stock view.
+      void fetch("/api/enrichment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [{ ticker: clean, currentPrice: data.snapshot.currentPrice }] })
+      })
+        .then(async (r) => safeParse(await r.text(), r.status))
+        .then((extra) => {
+          const enrichment = extra?.enrichment?.[clean];
+          if (enrichment) setQuick((current) => current && current.ticker === clean ? { ...current, ...enrichment } : current);
+        })
+        .catch(() => { /* optional enrichment; core snapshot remains usable */ });
     } catch (e) { setResearchError(e instanceof Error ? e.message : "Snapshot failed"); }
     finally { setResearchLoading(false); }
   }
@@ -152,7 +166,7 @@ export default function Home() {
           {researchError && <ErrorPanel text={researchError}/>} 
           {quick && !report && <QuickResearchView snapshot={quick} deepLoading={deepLoading} onDeep={runDeepResearch}/>}
           {deepLoading && <LoadingPanel text="Deep research is checking SEC filings, fundamentals, catalysts, dilution risk and primary sources. This is the slower step."/>}
-          {report && <ResearchView report={report}/>} 
+          {report && <ResearchView report={report} snapshot={quick}/>} 
           {!quick && !report && !researchLoading && !researchError && <EmptyResearch/>}
         </>
       )}
@@ -222,7 +236,7 @@ function QuickResearchView({ snapshot, deepLoading, onDeep }: { snapshot: QuickS
     </section>
 
     <section className="metricGrid reportMetrics">
-      <Metric label="Technical" value={`${snapshot.technical.score}/100`}/><Metric label="RVOL" value={snapshot.technical.rvolVerified && snapshot.technical.rvol ? `${snapshot.technical.rvol.toFixed(1)}x` : "Verify"}/><Metric label="From HOD" value={`-${pct(snapshot.technical.distanceFromHodPct)}`}/><Metric label="VWAP" value={snapshot.technical.aboveVwap == null ? "—" : snapshot.technical.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(snapshot.volume)}/><Metric label="HOD" value={money(snapshot.high)}/>
+      <Metric label="Price" value={money(snapshot.currentPrice)}/><Metric label="HOD" value={money(snapshot.high)}/><Metric label="From HOD" value={`-${pct(snapshot.technical.distanceFromHodPct)}`}/><Metric label="LOD" value={money(snapshot.low)}/><Metric label="Technical" value={`${snapshot.technical.score}/100`}/><Metric label="RVOL" value={snapshot.technical.rvolVerified && snapshot.technical.rvol ? `${snapshot.technical.rvol.toFixed(1)}x` : "Verify"}/><Metric label="VWAP" value={snapshot.technical.aboveVwap == null ? "—" : snapshot.technical.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(snapshot.volume)}/><Metric label="Avg Volume" value={compact(snapshot.averageVolume)}/><Metric label="Dollar Volume" value={`$${compact(snapshot.dollarVolume)}`}/><Metric label="Spread" value={snapshot.technical.spreadPct == null ? "—" : pct(snapshot.technical.spreadPct, 2)}/><Metric label="Shares Out." value={compact(snapshot.outstandingShares)}/><Metric label="Free Float" value={compact(snapshot.freeFloatShares)}/><Metric label="Float %" value={snapshot.freeFloatPercent == null ? "—" : pct(snapshot.freeFloatPercent)}/><Metric label="Float Mkt Cap" value={snapshot.floatMarketCap == null ? "—" : `$${compact(snapshot.floatMarketCap)}`}/>
     </section>
 
     <section className="reportSection"><div className="sectionHeading inner"><div><p className="kicker">MARKET STRUCTURE</p><h2>Intraday chart</h2></div><span>LOD {money(snapshot.low)} · VWAP {money(snapshot.technical.vwap)}</span></div><StockChart bars={snapshot.bars}/></section>
@@ -236,7 +250,7 @@ function QuickResearchView({ snapshot, deepLoading, onDeep }: { snapshot: QuickS
   </div>;
 }
 
-function ResearchView({ report }: { report: SingleStockReport }) {
+function ResearchView({ report, snapshot }: { report: SingleStockReport; snapshot: QuickStockSnapshot | null }) {
   return <div className="researchReport">
     <section className="reportHero">
       <div>
@@ -248,7 +262,7 @@ function ResearchView({ report }: { report: SingleStockReport }) {
     </section>
 
     <section className="metricGrid reportMetrics">
-      <Metric label="Technical" value={`${report.technical.score}/100`}/><Metric label="Catalyst" value={`${report.catalyst.qualityScore}/100`}/><Metric label="RVOL" value={report.technical.rvolVerified && report.technical.rvol ? `${report.technical.rvol.toFixed(1)}x` : "Verify"}/><Metric label="From HOD" value={`-${pct(report.technical.distanceFromHodPct)}`}/><Metric label="VWAP" value={report.technical.aboveVwap == null ? "—" : report.technical.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(report.volume)}/>
+      <Metric label="Price" value={money(report.currentPrice)}/><Metric label="HOD" value={money(report.high)}/><Metric label="From HOD" value={`-${pct(report.technical.distanceFromHodPct)}`}/><Metric label="LOD" value={money(report.low)}/><Metric label="Technical" value={`${report.technical.score}/100`}/><Metric label="Catalyst" value={`${report.catalyst.qualityScore}/100`}/><Metric label="RVOL" value={report.technical.rvolVerified && report.technical.rvol ? `${report.technical.rvol.toFixed(1)}x` : "Verify"}/><Metric label="VWAP" value={report.technical.aboveVwap == null ? "—" : report.technical.aboveVwap ? "Above" : "Below"}/><Metric label="Volume" value={compact(report.volume)}/><Metric label="Avg Volume" value={compact(snapshot?.averageVolume)}/><Metric label="Dollar Volume" value={snapshot ? `$${compact(snapshot.dollarVolume)}` : "—"}/><Metric label="Spread" value={report.technical.spreadPct == null ? "—" : pct(report.technical.spreadPct, 2)}/><Metric label="Shares Out." value={compact(snapshot?.outstandingShares)}/><Metric label="Free Float" value={compact(snapshot?.freeFloatShares)}/><Metric label="Float %" value={snapshot?.freeFloatPercent == null ? "—" : pct(snapshot.freeFloatPercent)}/><Metric label="Float Mkt Cap" value={snapshot?.floatMarketCap == null ? "—" : `$${compact(snapshot.floatMarketCap)}`}/>
     </section>
 
     <section className="reportSection"><div className="sectionHeading inner"><div><p className="kicker">MARKET STRUCTURE</p><h2>Intraday chart</h2></div><span>HOD {money(report.high)} · LOD {money(report.low)}</span></div><StockChart bars={report.bars}/></section>

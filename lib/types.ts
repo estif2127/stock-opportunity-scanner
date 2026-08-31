@@ -165,6 +165,14 @@ export type QuickStockSnapshot = {
   low: number;
   prevClose: number;
   volume: number;
+  averageVolume: number | null;
+  dollarVolume: number;
+  outstandingShares?: number | null;
+  outstandingSharesAsOf?: string | null;
+  freeFloatShares?: number | null;
+  freeFloatPercent?: number | null;
+  freeFloatAsOf?: string | null;
+  floatMarketCap?: number | null;
   bars: Bar[];
   technical: {
     score: number;
