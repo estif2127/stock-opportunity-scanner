@@ -15,6 +15,8 @@ function yyyyMmDd(d: Date) {
 export async function POST() {
   const started = Date.now();
   try {
+    // Snapshot data is discovery-only. Finalist metrics are rebuilt from one
+    // consistent 1-minute regular-session bar series.
     const snapshots = await getAllSnapshots();
     const discovered = snapshots
       .filter(discoveryFilter)
@@ -26,7 +28,7 @@ export async function POST() {
 
     const validatedRaw = await Promise.allSettled(
       shortlist.map(async (s) => {
-        const bars = await getBars(s.ticker, yyyyMmDd(start), yyyyMmDd(end));
+        const bars = await getBars(s.ticker, yyyyMmDd(start), yyyyMmDd(end), "1min");
         return buildCandidate(s, bars);
       })
     );
@@ -42,8 +44,6 @@ export async function POST() {
     candidates = candidates.map((c) => ({
       ...c,
       news: news.filter((n) => n.tickers?.some((t) => t.toUpperCase() === c.ticker.toUpperCase())).slice(0, 6),
-      // Shares/float enrichment now loads after the core scan returns, so these
-      // slow external calls never block market-scan results.
       outstandingShares: null,
       outstandingSharesAsOf: null,
       freeFloatShares: null,
@@ -52,7 +52,6 @@ export async function POST() {
       floatMarketCap: null
     }));
 
-    // v0.2: one primary-source web-research pass across the top finalists.
     candidates = await verifyCatalysts(candidates);
     candidates = await analyzeCandidates(candidates);
 
@@ -60,7 +59,8 @@ export async function POST() {
       c.ai?.rating === "Strong" &&
       c.technicalScore >= 70 &&
       c.research?.status === "Confirmed" &&
-      (c.research?.dilutionFlags.length || 0) === 0
+      (c.research?.dilutionFlags.length || 0) === 0 &&
+      !c.dataStale
     );
     const status = strong.length ? "OPPORTUNITIES_FOUND" : "NO_TRADE";
 
@@ -68,13 +68,14 @@ export async function POST() {
       status,
       generatedAt: new Date().toISOString(),
       elapsedMs: Date.now() - started,
-      dataLabel: "Tiingo consolidated derived realtime + consolidated intraday bars",
+      dataLabel: "Tiingo snapshot for discovery; finalist price/HOD/LOD/volume/VWAP from one consistent 1-minute regular-session bar series",
       researchLabel: "OpenAI primary-source web verification (SEC / company IR / FDA / ClinicalTrials.gov)",
       limitations: [
-        "Shares outstanding are sourced from SEC XBRL. Free float is sourced from ORTEX when available; float market cap is calculated as current price × free-float shares. Float data can lag ownership filings and may be unavailable on the trial feed.",
+        "Displayed finalist price is the latest 1-minute bar close, not a guaranteed exchange last-sale tick. Tiingo reference price is shown separately.",
+        "If the latest intraday bar is more than 120 seconds old, the setup is marked stale and cannot receive a Strong rating.",
+        "Shares outstanding are sourced from SEC XBRL. Free float is sourced from ORTEX when available; float market cap is calculated as current price × free-float shares.",
         "Primary-source catalyst research is limited to the strongest finalists to control cost and latency.",
-        "Tiingo Starter data is licensed for personal/internal use; do not redistribute it publicly.",
-        "A Strong rating is research output, not an instruction to trade. Confirm prices and filings yourself before acting."
+        "Tiingo Starter data is licensed for personal/internal use; do not redistribute it publicly."
       ],
       stats: {
         snapshots: snapshots.length,

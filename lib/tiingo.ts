@@ -28,11 +28,11 @@ export async function getAllSnapshots(): Promise<Snapshot[]> {
   return tiingoFetch<Snapshot[]>("/tiingo/equity/intraday");
 }
 
-export async function getBars(ticker: string, startDate: string, endDate: string): Promise<Bar[]> {
+export async function getBars(ticker: string, startDate: string, endDate: string, resampleFreq = "1min"): Promise<Bar[]> {
   const qs = new URLSearchParams({
     startDate,
     endDate,
-    resampleFreq: "5min",
+    resampleFreq,
     columns: "open,high,low,close,volume",
     afterHours: "false"
   });

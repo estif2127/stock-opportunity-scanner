@@ -21,8 +21,9 @@ export function rankDiscovery(s: Snapshot): number {
 
 function sessionBars(bars: Bar[]): Bar[] {
   if (!bars.length) return [];
-  const latestDay = bars[bars.length - 1].date.slice(0, 10);
-  return bars.filter((b) => b.date.slice(0, 10) === latestDay);
+  const sorted = [...bars].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const latestDay = sorted[sorted.length - 1].date.slice(0, 10);
+  return sorted.filter((b) => b.date.slice(0, 10) === latestDay);
 }
 
 export function calcVwap(bars: Bar[]): number | null {
@@ -41,8 +42,8 @@ export function calcVwap(bars: Bar[]): number | null {
 export function calcVolumeAcceleration(bars: Bar[]): number | null {
   const current = sessionBars(bars);
   if (current.length < 8) return null;
-  const recent = current.slice(-3).reduce((s, b) => s + (b.volume || 0), 0) / 3;
-  const prior = current.slice(Math.max(0, current.length - 15), -3);
+  const recent = current.slice(-5).reduce((s, b) => s + (b.volume || 0), 0) / 5;
+  const prior = current.slice(Math.max(0, current.length - 35), -5);
   if (!prior.length) return null;
   const baseline = prior.reduce((s, b) => s + (b.volume || 0), 0) / prior.length;
   return baseline > 0 ? recent / baseline : null;
@@ -58,7 +59,7 @@ export function calcHigherLows(bars: Bar[]): boolean | null {
 export function calcComparableRvol(bars: Bar[]): { value: number | null; verified: boolean } {
   if (!bars.length) return { value: null, verified: false };
   const grouped = new Map<string, Bar[]>();
-  for (const b of bars) {
+  for (const b of [...bars].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())) {
     const d = b.date.slice(0, 10);
     if (!grouped.has(d)) grouped.set(d, []);
     grouped.get(d)!.push(b);
@@ -81,30 +82,35 @@ export function calcComparableRvol(bars: Bar[]): { value: number | null; verifie
 
 function calcAverageDailyVolume(bars: Bar[]): number | null {
   if (!bars.length) return null;
-
-  // Reuse the intraday history we already fetched for RVOL so this adds
-  // zero extra Tiingo requests. Sum each completed session's 5-minute bars,
-  // exclude the newest session (usually today), then average prior sessions.
   const byDay = new Map<string, number>();
   for (const bar of bars) {
     const day = bar.date.slice(0, 10);
     byDay.set(day, (byDay.get(day) || 0) + (Number.isFinite(bar.volume) ? bar.volume : 0));
   }
-
   const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
   if (days.length < 2) return null;
   const completed = days.slice(0, -1).map(([, volume]) => volume).filter((v) => v > 0);
   if (!completed.length) return null;
-
-  // Use up to the most recent 20 completed sessions available in the fetched window.
   const sample = completed.slice(-20);
   return sample.reduce((sum, volume) => sum + volume, 0) / sample.length;
 }
 
 export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
-  const price = s.tngoLast!;
-  const high = s.high!;
+  const current = sessionBars(bars);
+  if (!current.length) throw new Error(`${s.ticker}: no intraday bars returned`);
+
+  const latest = current[current.length - 1];
+  const price = latest.close;
+  const high = Math.max(...current.map((b) => b.high));
+  const low = Math.min(...current.map((b) => b.low));
+  const volume = current.reduce((sum, b) => sum + (n(b.volume) ? b.volume : 0), 0);
   const prevClose = s.prevClose!;
+  const referencePrice = n(s.lqRefPrice) ? s.lqRefPrice : n(s.tngoLast) ? s.tngoLast : null;
+  const latestTs = latest.date || null;
+  const parsedTs = latestTs ? Date.parse(latestTs) : NaN;
+  const dataAgeSeconds = Number.isFinite(parsedTs) ? Math.max(0, Math.floor((Date.now() - parsedTs) / 1000)) : null;
+  const dataStale = dataAgeSeconds != null ? dataAgeSeconds > 120 : true;
+
   const changePct = ((price - prevClose) / prevClose) * 100;
   const distanceFromHodPct = high > 0 ? ((high - price) / high) * 100 : 999;
   const vwap = calcVwap(bars);
@@ -114,8 +120,8 @@ export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
   const higherLows = calcHigherLows(bars);
   const spreadPct = n(s.lqSpread)
     ? s.lqSpread * 100
-    : n(s.lqBidPrice) && n(s.lqAskPrice) && price > 0
-      ? ((s.lqAskPrice - s.lqBidPrice) / price) * 100
+    : n(s.lqBidPrice) && n(s.lqAskPrice) && referencePrice && referencePrice > 0
+      ? ((s.lqAskPrice - s.lqBidPrice) / referencePrice) * 100
       : null;
   const aboveVwap = vwap == null ? null : price >= vwap;
 
@@ -154,7 +160,7 @@ export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
     else warnings.push(`Wide ${spreadPct.toFixed(2)}% spread`);
   } else warnings.push("Spread unavailable");
 
-  const dollarVolume = price * s.volume!;
+  const dollarVolume = price * volume;
   if (dollarVolume >= 20_000_000) score += 10;
   else if (dollarVolume >= 5_000_000) score += 7;
   else score += 3;
@@ -163,14 +169,20 @@ export function buildCandidate(s: Snapshot, bars: Bar[]): Candidate {
   else if (changePct <= 60) score += 3;
   else warnings.push("Parabolic move / chase risk");
 
+  if (dataStale) warnings.push("Intraday bar data is stale — needs live confirmation");
+
   return {
     ticker: s.ticker,
     currentPrice: price,
+    referencePrice,
+    dataTimestamp: latestTs,
+    dataAgeSeconds,
+    dataStale,
     changePct,
-    volume: s.volume!,
+    volume,
     averageVolume,
     high,
-    low: s.low!,
+    low,
     prevClose,
     distanceFromHodPct,
     spreadPct,

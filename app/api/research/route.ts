@@ -23,7 +23,7 @@ async function loadCandidate(ticker: string): Promise<Candidate> {
   const end = new Date();
   const start = new Date(end.getTime() - 18 * 24 * 60 * 60 * 1000);
   const [bars, news] = await Promise.all([
-    getBars(ticker, yyyyMmDd(start), yyyyMmDd(end)),
+    getBars(ticker, yyyyMmDd(start), yyyyMmDd(end), "1min"),
     getNews([ticker])
   ]);
 
@@ -39,6 +39,10 @@ function quickSnapshot(candidate: Candidate): QuickStockSnapshot {
     ticker: candidate.ticker,
     generatedAt: new Date().toISOString(),
     currentPrice: candidate.currentPrice,
+    referencePrice: candidate.referencePrice ?? null,
+    dataTimestamp: candidate.dataTimestamp ?? null,
+    dataAgeSeconds: candidate.dataAgeSeconds ?? null,
+    dataStale: candidate.dataStale ?? true,
     changePct: candidate.changePct,
     high: candidate.high,
     low: candidate.low,
@@ -94,12 +98,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ snapshot: quickSnapshot(candidate), elapsedMs: Date.now() - started });
     }
 
-    // Hard route-level guard: never let deep research consume Vercel's full function window.
-    // Even if an upstream web-search request ignores/defers abort, the API returns a
-    // conservative partial report to the browser after ~65 seconds.
     const HARD_ROUTE_BUDGET_MS = 65_000;
-    // Pull normalized fundamentals directly from Tiingo before asking the model to interpret them.
-    // This is fast and prevents large-cap fundamentals from disappearing when web research is slow.
     const structured = await getStructuredFundamentals(ticker);
     console.info("[fundamentals]", ticker, { available: structured.available, period: structured.period, error: structured.error });
 
@@ -114,8 +113,6 @@ export async function POST(req: NextRequest) {
       )
     ]);
 
-    // Cache completed and partial reports briefly so repeated clicks do not immediately
-    // start another expensive research request.
     deepCache.set(ticker, { expires: Date.now() + CACHE_MS, report });
     return NextResponse.json({ report, cached: false, elapsedMs: Date.now() - started });
   } catch (error) {

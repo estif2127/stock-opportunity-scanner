@@ -71,6 +71,10 @@ export type CatalystResearch = {
 export type Candidate = {
   ticker: string;
   currentPrice: number;
+  referencePrice?: number | null;
+  dataTimestamp?: string | null;
+  dataAgeSeconds?: number | null;
+  dataStale?: boolean;
   changePct: number;
   volume: number;
   averageVolume: number | null;
@@ -113,7 +117,6 @@ export type Candidate = {
   };
 };
 
-
 export type StructuredFundamentals = {
   available: boolean;
   source: string;
@@ -155,11 +158,14 @@ export type ResearchSource = {
   category: "SEC" | "Company" | "FDA" | "ClinicalTrials" | "News" | "Other";
 };
 
-
 export type QuickStockSnapshot = {
   ticker: string;
   generatedAt: string;
   currentPrice: number;
+  referencePrice?: number | null;
+  dataTimestamp?: string | null;
+  dataAgeSeconds?: number | null;
+  dataStale?: boolean;
   changePct: number;
   high: number;
   low: number;
